@@ -40,10 +40,16 @@ class RuleGenerator:
         self.last_panel: int | None = None
         self.last_beat: float | None = None
 
-    def step(self, beat: float, hold_end: float | None = None) -> int | None:
+    def step(self, beat: float, hold_end: float | None = None,
+             fgap: float | None = None) -> int | None:
         """Pick a panel for a note at `beat`. Returns None if the note must be
-        dropped (both feet busy holding, or no comfortable panel exists)."""
-        gap = None if self.last_beat is None else beat - self.last_beat
+        dropped (both feet busy holding, or no comfortable panel exists).
+        `fgap` is the tempo-folded gap to the previous note; when omitted the
+        raw beat distance is used."""
+        if fgap is not None:
+            gap = None if self.last_beat is None else fgap
+        else:
+            gap = None if self.last_beat is None else beat - self.last_beat
 
         foot = self.next_foot
         other = _other(foot)
@@ -85,6 +91,24 @@ class RuleGenerator:
         if hold_end is not None:
             self.hold_until[foot] = hold_end
         return panel
+
+    def observe(self, beat: float, panel: int, hold_end: float | None = None) -> None:
+        """Sync foot state with a step placed by the pattern matcher, so the
+        rule generator continues cleanly after pattern-emitted sections."""
+        if panel in (DL, UL):
+            foot = "L"
+        elif panel in (UR, DR):
+            foot = "R"
+        else:
+            foot = self.next_foot
+            if self._is_holding(foot, beat):
+                foot = _other(foot)
+        self.pos[foot] = panel
+        self.last_panel = panel
+        self.last_beat = beat
+        self.next_foot = _other(foot)
+        if hold_end is not None:
+            self.hold_until[foot] = hold_end
 
     def _is_holding(self, foot: str, beat: float) -> bool:
         return self.hold_until[foot] > beat + 1e-6

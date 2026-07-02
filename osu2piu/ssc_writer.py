@@ -18,6 +18,8 @@ class Chart:
     meter: int
     cells: dict[int, list[str]]           # row -> 5 note chars
     dropped: int = 0
+    stats: dict = field(default_factory=dict)   # exact/downgrade/fallback counts
+    avg_source_meter: float = 0.0
 
 
 @dataclass

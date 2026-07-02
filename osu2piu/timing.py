@@ -40,6 +40,15 @@ class BeatGrid:
         if min_beat < -1e-6:
             self.shift = 4.0 * math.ceil(-min_beat / 4.0)
 
+    def bpm_at_ms(self, ms: float) -> float:
+        seg = self.segments[0]
+        for s in self.segments:
+            if s[0] <= ms + 1e-6:
+                seg = s
+            else:
+                break
+        return 60000.0 / seg[1]
+
     @property
     def offset_seconds(self) -> float:
         """StepMania #OFFSET: negated audio time of beat 0."""
