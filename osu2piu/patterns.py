@@ -82,6 +82,7 @@ class Library:
 def build_library(training_dir: str, out_path: str) -> Library:
     phrases: list[dict] = []
     nps_by_meter: dict[int, list[float]] = defaultdict(list)
+    share_by_meter: dict[int, list[float]] = defaultdict(list)  # per-chart hold shares
     files = sorted(Path(training_dir).rglob("*.ssc"))
     n_charts = 0
 
@@ -89,6 +90,8 @@ def build_library(training_dir: str, out_path: str) -> Library:
         for chart in parse_ssc_file(f):
             n_charts += 1
             nps_by_meter[chart.meter].append(chart.peak_nps)
+            share_by_meter[chart.meter].append(
+                sum(1 for s in chart.steps if s.is_hold) / len(chart.steps))
             for phrase_steps in _split_phrases(chart.steps):
                 phrases.append(_encode_phrase(phrase_steps, chart.meter))
         if (i + 1) % 500 == 0:
@@ -96,23 +99,23 @@ def build_library(training_dir: str, out_path: str) -> Library:
                   f"{n_charts} charts, {len(phrases)} phrases")
 
     tri: dict[str, array] = defaultdict(lambda: array("Q"))
-    kind_counts: dict[int, list[int]] = defaultdict(lambda: [0, 0])  # meter -> [holds, steps]
     for pid, ph in enumerate(phrases):
         tok = ph["t"]
         n = len(tok) // 2
-        counts = kind_counts[ph["m"]]
-        counts[0] += sum(1 for i in range(1, len(tok), 2) if tok[i] != "T")
-        counts[1] += n
         for off in range(min(n - 2, POS_SHIFT - 1)):
             tri[tok[off * 2:(off + 3) * 2]].append(pid * POS_SHIFT + off)
 
     level_table = {
         m: statistics.median(v) for m, v in nps_by_meter.items() if len(v) >= 5
     }
-    hold_share = {
-        m: holds / steps for m, (holds, steps) in kind_counts.items()
-        if steps >= 2000 and m in level_table
-    }
+    # median among charts that USE holds: zero-hold charts (~45% at low meters!)
+    # correspond to osu maps with nothing to hold, which self-select out via
+    # slider eligibility — they must not dilute the budget.
+    hold_share = {}
+    for m, shares in share_by_meter.items():
+        users = [s for s in shares if s > 0]
+        if len(users) >= 10 and m in level_table:
+            hold_share[m] = statistics.median(users)
     lib = Library(phrases, dict(tri), level_table, hold_share)
     lib.save(out_path)
 
