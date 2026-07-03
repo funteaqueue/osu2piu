@@ -46,15 +46,17 @@ def step_token(step: Step) -> str:
 
 
 class Library:
-    def __init__(self, phrases, tri, level_table):
+    def __init__(self, phrases, tri, level_table, hold_share=None):
         self.phrases = phrases          # list of {t, p, u, m}
         self.tri = tri                  # 6-char token key -> array('Q') of positions
         self.level_table = level_table  # meter -> median peak_nps
+        self.hold_share = hold_share or {}  # meter -> fraction of steps that hold
 
     def save(self, path: str) -> None:
         with open(path, "wb") as f:
             pickle.dump(
-                {"phrases": self.phrases, "tri": self.tri, "level_table": self.level_table},
+                {"phrases": self.phrases, "tri": self.tri,
+                 "level_table": self.level_table, "hold_share": self.hold_share},
                 f, protocol=pickle.HIGHEST_PROTOCOL,
             )
 
@@ -62,12 +64,19 @@ class Library:
     def load(cls, path: str) -> "Library":
         with open(path, "rb") as f:
             d = pickle.load(f)
-        return cls(d["phrases"], d["tri"], d["level_table"])
+        return cls(d["phrases"], d["tri"], d["level_table"], d.get("hold_share"))
 
     def estimate_level(self, peak_nps: float) -> int:
         if not self.level_table:
             return max(1, min(24, round(peak_nps * 2.3)))
         return min(self.level_table, key=lambda m: abs(self.level_table[m] - peak_nps))
+
+    def hold_target(self, level: int) -> float | None:
+        """Fraction of notes that real charts of this level make holds."""
+        if not self.hold_share:
+            return None
+        nearest = min(self.hold_share, key=lambda m: abs(m - level))
+        return self.hold_share[nearest]
 
 
 def build_library(training_dir: str, out_path: str) -> Library:
@@ -87,16 +96,24 @@ def build_library(training_dir: str, out_path: str) -> Library:
                   f"{n_charts} charts, {len(phrases)} phrases")
 
     tri: dict[str, array] = defaultdict(lambda: array("Q"))
+    kind_counts: dict[int, list[int]] = defaultdict(lambda: [0, 0])  # meter -> [holds, steps]
     for pid, ph in enumerate(phrases):
         tok = ph["t"]
         n = len(tok) // 2
+        counts = kind_counts[ph["m"]]
+        counts[0] += sum(1 for i in range(1, len(tok), 2) if tok[i] != "T")
+        counts[1] += n
         for off in range(min(n - 2, POS_SHIFT - 1)):
             tri[tok[off * 2:(off + 3) * 2]].append(pid * POS_SHIFT + off)
 
     level_table = {
         m: statistics.median(v) for m, v in nps_by_meter.items() if len(v) >= 5
     }
-    lib = Library(phrases, dict(tri), level_table)
+    hold_share = {
+        m: holds / steps for m, (holds, steps) in kind_counts.items()
+        if steps >= 2000 and m in level_table
+    }
+    lib = Library(phrases, dict(tri), level_table, hold_share)
     lib.save(out_path)
 
     n_steps = sum(len(p["p"]) for p in phrases)

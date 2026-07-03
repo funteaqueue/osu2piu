@@ -63,7 +63,8 @@ def convert_osz(osz_path: str, out_root: str, seed: int | None = None,
 def _build_chart(bm: Beatmap, grid: BeatGrid, rng: random.Random,
                  lib: Library | None) -> Chart:
     level = _pre_level(bm, lib)
-    events = classify(bm, grid, level, rng)
+    events = classify(bm, grid, level, rng,
+                      hold_target=lib.hold_target(level) if lib else None)
     tokens = [ev.token for ev in events]
     phrase_starts = _phrase_starts(events)
 
@@ -167,8 +168,10 @@ def _pre_level(bm: Beatmap, lib: Library | None) -> int:
 
 def _final_level(cells, grid: BeatGrid, lib: Library | None) -> int:
     """Level from the GENERATED chart's density (at high levels most sliders
-    became taps, so osu object counts under-measure)."""
-    times = sorted(_row_time(grid, row) for row in cells)
+    became taps, so osu object counts under-measure). Rows holding only hold
+    tails ('3') are not steps."""
+    times = sorted(_row_time(grid, row) for row, chars in cells.items()
+                   if any(c in "12" for c in chars))
     peak = _peak_nps(times)
     if lib:
         return lib.estimate_level(peak)

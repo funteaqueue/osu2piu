@@ -1,10 +1,14 @@
 """Translate osu objects into the pattern token language (TAP / HOLD),
-deciding hold intent with a restfulness gate.
+deciding hold intent with a budgeted restfulness gate.
 
 In osu, sliders are flow (moving a cursor is free); in PIU a hold anchors a
-foot and mostly functions as rest. A slider becomes a hold only where a rest
-belongs. osu!standard objects never overlap, so a slider's rest value is
-fully described by its duration and the gap after its tail.
+foot. Real charts are far more tap-dominated than osu slider density suggests
+(training corpus: ~3% holds at level 4, peaking at ~12% around level 15-21).
+
+So the gate works on a budget: the corpus sets how MANY holds a chart of this
+level should have, and the restfulness score decides WHICH sliders win those
+slots. osu!standard objects never overlap, so a slider's rest value is fully
+described by its duration and the gap after its tail.
 """
 from __future__ import annotations
 
@@ -17,9 +21,10 @@ from .timing import BeatGrid
 
 MIN_HOLD_FBEATS = 0.75      # shorter sliders are always just taps
 LONG_HOLD_FBEATS = 2.0      # HOLD_S / HOLD_L boundary
-EFFORT_WINDOW_FBEATS = 8.0  # trailing window for the "needs a break" meter
-EFFORT_HIGH = 12            # this many steps in the window = player is working
 MAX_REPEAT_TAPS = 8         # cap on under-hold taps from one returning slider
+
+# fallback when converting without a pattern library (corpus-shaped curve)
+DEFAULT_HOLD_SHARE = ((4, 0.03), (8, 0.05), (12, 0.07), (15, 0.10), (21, 0.12), (99, 0.08))
 
 
 @dataclass
@@ -36,33 +41,44 @@ class NoteEvent:
         return gap_class(min(self.fgap, 99.0)) + self.kind
 
 
-def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random) -> list[NoteEvent]:
+def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
+             hold_target: float | None = None) -> list[NoteEvent]:
     objs = bm.hit_objects
-    events: list[NoteEvent] = []
-    recent_holds = 0  # consecutive hold decisions with small gaps
+    if hold_target is None:
+        hold_target = _default_hold_share(level)
 
+    # pass 1: restfulness of every hold-eligible object
+    fbpms, fdurs, rests = [], [], {}
+    spinner_holds = set()
+    for i, ho in enumerate(objs):
+        fbpm = fold_bpm(grid.bpm_at_ms(ho.time))
+        fdur = (ho.end_time - ho.time) / 60000.0 * fbpm
+        fbpms.append(fbpm)
+        fdurs.append(fdur)
+        if ho.kind == "spinner" and fdur >= 1.0:
+            spinner_holds.add(i)  # spinners are osu's own rest markers
+        elif ho.kind == "slider" and fdur >= MIN_HOLD_FBEATS:
+            gap_next = (_fgap(ho.end_time, objs[i + 1].time, fbpm)
+                        if i + 1 < len(objs) else 99.0)
+            # jitter keeps different seeds from always choosing the same slots
+            rests[i] = (fdur + gap_next) * rng.uniform(0.9, 1.1)
+
+    # pass 2: the corpus-calibrated budget picks the most breather-like sliders
+    budget = max(0, round(hold_target * len(objs)) - len(spinner_holds))
+    accepted = set(sorted(rests, key=rests.get, reverse=True)[:budget])
+    accepted |= spinner_holds
+
+    events: list[NoteEvent] = []
+    recent_holds = 0
     for i, ho in enumerate(objs):
         beat = grid.beat_at(ho.time)
         end_beat = grid.beat_at(ho.end_time)
-        fbpm = fold_bpm(grid.bpm_at_ms(ho.time))
-        fdur = (ho.end_time - ho.time) / 60000.0 * fbpm
+        fbpm, fdur = fbpms[i], fdurs[i]
         gap_prev = _fgap(objs[i - 1].end_time, ho.time, fbpm) if i else float("inf")
-        gap_next = _fgap(ho.end_time, objs[i + 1].time, fbpm) if i + 1 < len(objs) else 99.0
 
-        as_hold = False
-        if ho.kind == "spinner":
-            as_hold = fdur >= 1.0
-        elif ho.kind == "slider" and fdur >= MIN_HOLD_FBEATS:
-            rest_score = fdur + gap_next
-            if level <= 5:
-                as_hold = rng.random() < 0.85
-            elif level <= 10:
-                as_hold = rest_score >= 1.5
-            else:
-                effort = _effort(objs, i, fbpm)
-                as_hold = rest_score >= 2.5 or (effort >= EFFORT_HIGH and rest_score >= 1.5)
+        as_hold = i in accepted
         # hold-ladder limiter: several anchored feet in a row at speed is misery
-        if as_hold and recent_holds >= 2 and gap_prev < 1.0:
+        if as_hold and i not in spinner_holds and recent_holds >= 2 and gap_prev < 1.0:
             as_hold = False
         recent_holds = recent_holds + 1 if (as_hold and gap_prev < 1.0) else (1 if as_hold else 0)
 
@@ -86,11 +102,12 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random) -> lis
     return events
 
 
+def _default_hold_share(level: int) -> float:
+    for cap, share in DEFAULT_HOLD_SHARE:
+        if level <= cap:
+            return share
+    return 0.08
+
+
 def _fgap(prev_end_ms: float, time_ms: float, fbpm: float) -> float:
     return max(0.0, time_ms - prev_end_ms) / 60000.0 * fbpm
-
-
-def _effort(objs, i: int, fbpm: float) -> int:
-    window_ms = EFFORT_WINDOW_FBEATS * 60000.0 / fbpm
-    t = objs[i].time
-    return sum(1 for o in objs[max(0, i - 40):i] if o.time >= t - window_ms)

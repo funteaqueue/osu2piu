@@ -121,5 +121,8 @@ avg source meter used.
 
 - Keep jumps as multi-panel tokens instead of phrase breaks (harder charts).
 - Use osu x/y spatial data (stacks → same panel, big cursor jumps → far panel).
-- Learn hold placement statistics from training charts (hold rate vs local
-  density) to tune the restfulness gate thresholds per level.
+- ~~Learn hold placement from training charts~~ DONE: the corpus hold-share
+  table (per meter) sets a hold budget; rest_score ranks which sliders win
+  the slots. Real charts: ~3% holds at lvl 4, ~12% at lvl 15-21, falling
+  again 22+. Note the original per-level threshold policy had this backwards
+  (assumed easy = hold-liberal).
