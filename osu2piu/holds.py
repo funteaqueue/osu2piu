@@ -26,6 +26,11 @@ MAX_REPEAT_TAPS = 8         # cap on under-hold taps from one returning slider
 # fallback when converting without a pattern library (corpus-shaped curve)
 DEFAULT_HOLD_SHARE = ((4, 0.03), (8, 0.05), (12, 0.07), (15, 0.10), (21, 0.12), (99, 0.08))
 
+# maps far more slider-heavy than a typical osu map (~50%) get a bigger hold
+# budget — the mapper heard the song as sustained phrases, let that through
+BASELINE_SLIDER_SHARE = 0.50
+SLIDER_BOOST_RANGE = (0.75, 2.0)
+
 
 @dataclass
 class NoteEvent:
@@ -46,6 +51,9 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
     objs = bm.hit_objects
     if hold_target is None:
         hold_target = _default_hold_share(level)
+    slider_share = sum(1 for o in objs if o.kind == "slider") / max(1, len(objs))
+    lo, hi = SLIDER_BOOST_RANGE
+    hold_target *= min(hi, max(lo, slider_share / BASELINE_SLIDER_SHARE))
 
     # pass 1: restfulness of every hold-eligible object
     fbpms, fdurs, rests = [], [], {}
