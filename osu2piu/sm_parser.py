@@ -84,7 +84,10 @@ def _parse_chart(block: str, header: dict, source: str) -> ParsedChart | None:
         if timing.get(key, "").strip() or tags.get(key, "").strip():
             return None
     bpms = _parse_bpms(timing.get("BPMS", ""))
-    if not bpms or any(not 20.0 <= bpm <= 1200.0 for _, bpm in bpms):
+    # display-BPM gimmicks (e.g. 175/16 = 10.9375 with 16x row subdivision)
+    # stay internally consistent: beat->time is correct and fold_bpm()
+    # recovers the real tempo, so only non-positive BPMs are rejected
+    if not bpms or any(bpm <= 0 for _, bpm in bpms):
         return None
 
     notes = tags.get("NOTES")
