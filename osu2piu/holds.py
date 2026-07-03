@@ -117,7 +117,13 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
         gap_prev = _fgap(objs[i - 1].end_time, ho.time, fbpm) if i else 99.0
         gap_next = (_fgap(ho.end_time, objs[i + 1].time, fbpm)
                     if i + 1 < len(objs) else 99.0)
-        if gap_prev < min_before or gap_next < min_after:
+        roomy = gap_prev >= min_before and gap_next >= min_after
+        # dense charts (continuous 8th runs) jump at phrase boundaries, where
+        # one side is generous and the other is a run gap — allow from lvl 6
+        boundary = level >= 6 and (
+            (gap_prev >= 1.5 and gap_next >= 0.5)
+            or (gap_next >= 1.5 and gap_prev >= 0.5))
+        if not (roomy or boundary):
             continue
         score = 0.0
         if ho.finish:
