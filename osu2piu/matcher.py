@@ -36,6 +36,14 @@ class PatternMatcher:
         self.lib = lib
         self.rng = rng
         self.level = target_level
+        # closest sources first; when widening, easy charts may reach DOWN
+        # freely but barely UP — a level-5 pattern has turns a level-2
+        # player can't read, while the reverse is merely easy.
+        up = 1 if target_level <= 5 else METER_WINDOW
+        self.meter_ranges = [
+            (target_level - 1, target_level + 1),
+            (target_level - METER_WINDOW, target_level + up),
+        ]
 
     def match(self, events: list[NoteEvent], tokens: list[str], i: int,
               placed: list[int], active_holds: dict[int, float],
@@ -43,21 +51,23 @@ class PatternMatcher:
         """events/tokens: full streams; i: index to generate from; placed:
         panels for events[:i] (None where dropped); active_holds:
         panel -> end_beat currently anchored."""
-        for exact in (True, False):
-            for overlap in (2, 1, 0):
-                if i - overlap < phrase_start:
-                    continue
-                if overlap == 0 and i != phrase_start:
-                    continue  # mid-phrase matches must chain onto placed feet
-                if overlap and any(p is None for p in placed[i - overlap:i]):
-                    continue
-                em = self._try(events, tokens, i, overlap, placed, active_holds, exact)
-                if em:
-                    return em
+        for lo, hi in self.meter_ranges:
+            for exact in (True, False):
+                for overlap in (2, 1, 0):
+                    if i - overlap < phrase_start:
+                        continue
+                    if overlap == 0 and i != phrase_start:
+                        continue  # mid-phrase matches must chain onto placed feet
+                    if overlap and any(p is None for p in placed[i - overlap:i]):
+                        continue
+                    em = self._try(events, tokens, i, overlap, placed,
+                                   active_holds, exact, lo, hi)
+                    if em:
+                        return em
         return None
 
     def _try(self, events, tokens, i, overlap, placed, active_holds,
-             exact) -> Emission | None:
+             exact, lo, hi) -> Emission | None:
         start = i - overlap
         window = tokens[start:start + MAX_MATCH]
         if len(window) < 3 or len(window) <= overlap:
@@ -74,7 +84,7 @@ class PatternMatcher:
         best_len, best = 0, []
         for pos in seeds:
             ph = self.lib.phrases[pos // POS_SHIFT]
-            if abs(ph["m"] - self.level) > METER_WINDOW:
+            if not lo <= ph["m"] <= hi:
                 continue
             off = pos % POS_SHIFT
             tok, panels = ph["t"], ph["p"]
