@@ -100,7 +100,10 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
         if ho.kind == "slider" and ho.repeats > 1:
             interval_ms = (ho.end_time - ho.time) / ho.repeats
             interval_f = interval_ms / 60000.0 * fbpm
-            if interval_f >= 0.2 and ho.repeats - 1 <= MAX_REPEAT_TAPS:
+            # feet, not a cursor: never manufacture under-hold taps faster
+            # than ~150ms even when the osu slider ticks faster
+            if interval_f >= 0.2 and interval_ms >= 150.0 \
+                    and ho.repeats - 1 <= MAX_REPEAT_TAPS:
                 for k in range(1, ho.repeats):
                     t = ho.time + k * interval_ms
                     events.append(NoteEvent(

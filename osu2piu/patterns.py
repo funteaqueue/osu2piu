@@ -116,7 +116,15 @@ class Library:
             rulers.append(lvl_speed)
         level = int(sum(rulers) / len(rulers) + 0.5)
         if lvl_speed is not None and fast_share is not None and fast_share >= 0.02:
-            discount = 0 if fast_share >= 0.10 else 1
+            # the speed table holds MEDIANS — a chart one or two levels below
+            # can still legitimately contain such bursts, so small fast shares
+            # discount the floor harder
+            if fast_share >= 0.15:
+                discount = 0
+            elif fast_share >= 0.08:
+                discount = 1
+            else:
+                discount = 2
             level = max(level, lvl_speed - discount)
         return level
 
