@@ -1,7 +1,7 @@
 # dev mode: uvicorn --reload + tsx watch + vite dev, all on bind mounts.
 #   docker compose -f compose.dev.yml up
-# frontend: http://localhost:5173  (proxies /api to the web service)
-# Same env-driven paths as docker-compose.yml — see .env.example.
+# frontend: http://localhost:${FRONTEND_PORT:-5173}  (proxies /api to the web service)
+# Same env-driven paths and ports as docker-compose.yml — see .env.example.
 services:
   engine:
     image: python:3.12-slim
@@ -15,7 +15,7 @@ services:
       - ${PATTERNS_FILE:-./patterns.pkl}:/data/patterns.pkl:ro
       - ${CORPUS_STATS_FILE:-./corpus_stats.json}:/data/corpus_stats.json:ro
     ports:
-      - "8000:8000"
+      - "${ENGINE_PORT:-8000}:8000"
 
   web:
     image: node:22-alpine
@@ -32,7 +32,7 @@ services:
       - ${PUBLISH_DIR:-./publish}:/publish
       - ${NOTESKIN_SOURCE_DIR:-./noteskin}:/noteskin:ro
     ports:
-      - "8080:8080"
+      - "${WEB_PORT:-8080}:8080"
     depends_on:
       - engine
 
@@ -45,6 +45,6 @@ services:
     volumes:
       - .:/app
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-5173}:5173"
     depends_on:
       - web

@@ -1,16 +1,19 @@
 # Local iteration:
-#   make dev        vite + tsx watch + uvicorn --reload, bind-mounted source
+#   make dev         vite + tsx watch + uvicorn --reload, bind-mounted source
 #
-# Production deploy on this (shared) host:
-#   make deploy     build (capped concurrency) + apply resource/log limits + up -d + prune
-#   make build      just rebuild the images
-#   make down       stop and remove containers
-#   make logs       follow both services
-#   make ps         container status + resource usage
+# Production deploy (fresh clone → running app, no setup):
+#   make prod        build + apply resource/log limits + up -d + prune
+#   make build       just rebuild the images
+#   make down        stop and remove containers
+#   make logs        follow both services
+#   make ps          container status + resource usage
+#
+# Host ports come from .env (copy .env.example). In prod only WEB_PORT is
+# published (default 8080) — reach the app at http://<host>:<WEB_PORT>.
 
 PROD = -f docker-compose.yml -f docker-compose.prod.yml
 
-.PHONY: dev build deploy down logs ps
+.PHONY: dev build prod deploy down logs ps
 
 dev:
 	docker compose -f compose.dev.yml up
@@ -20,9 +23,13 @@ dev:
 build:
 	COMPOSE_PARALLEL_LIMIT=1 docker compose $(PROD) build
 
-deploy: build
+# Production: build, then start detached with resource/log limits applied.
+prod: build
 	docker compose $(PROD) up -d --remove-orphans
 	docker image prune -f
+
+# Backwards-compatible alias for `make prod`.
+deploy: prod
 
 down:
 	docker compose $(PROD) down
