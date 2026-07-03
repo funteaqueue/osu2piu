@@ -26,3 +26,12 @@ services:
       - ${PUBLISH_DIR:-./publish}:/publish
       - ${NOTESKIN_SOURCE_DIR:-./noteskin}:/noteskin:ro
     restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - web
+    restart: unless-stopped

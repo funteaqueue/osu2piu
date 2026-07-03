@@ -1,0 +1,34 @@
+# Production overlay: caps CPU/memory and log growth so a rebuild or a
+# runaway request doesn't starve everything else sharing this host.
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# (the Makefile's `make deploy` does exactly this)
+#
+# Sized for a 4-core / 8GB box (measured: idle ~120MB/~0% CPU; a full
+# 7-difficulty conversion peaks at ~1 core and ~140-190MB for 1-2s, and
+# concurrent conversions don't exceed ~1.1 cores total — it's pure Python,
+# GIL-bound, effectively single-threaded work). 1.5 cores / 512MB leaves
+# real headroom over the measured peak while still guaranteeing 2.5+ cores
+# free for everything else on the box. Memory isn't the constraint here —
+# raise the CPU caps instead if conversions feel sluggish.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  engine:
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 512m
+
+  web:
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
