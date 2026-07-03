@@ -119,7 +119,13 @@ avg source meter used.
 
 ## Later / v2
 
-- Keep jumps as multi-panel tokens instead of phrase breaks (harder charts).
+- ~~Keep jumps as multi-panel tokens~~ DONE: jumps are first-class steps
+  (kind `J`, pair chars `A`-`J`); osu-side jumps synthesized on emphasis
+  (hitsound finish/clap, phrase boundaries, downbeats) under a corpus budget,
+  then matched through patterns like any step. Deliberate gap: notes inside
+  fast streams (< 0.45 folded beats of gathering room) never jump — dense
+  charts under-jump; a level-scaled gap threshold is the knob if play-testing
+  wants stream jumps at 12+.
 - Use osu x/y spatial data (stacks → same panel, big cursor jumps → far panel).
 - ~~Learn hold placement from training charts~~ DONE: the corpus hold-share
   table (per meter) sets a hold budget; rest_score ranks which sliders win
