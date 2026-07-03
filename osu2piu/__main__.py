@@ -23,15 +23,27 @@ def main() -> int:
                       help="pattern library (patterns.pkl); omit for pure rule generator")
     conv.add_argument("--seed", type=int, default=None,
                       help="fix RNG for reproducible charts")
+    conv.add_argument("--no-beginner", action="store_true",
+                      help="skip the derived level-1/2 beginner charts")
 
     build = sub.add_parser("build-patterns", help="harvest a pattern library")
     build.add_argument("training", help="directory with StepMania packs")
     build.add_argument("-o", "--out", default="patterns.pkl", help="library output path")
 
+    corpus = sub.add_parser("build-corpus-stats",
+                            help="per-chart metrics + per-level medians for comparisons")
+    corpus.add_argument("training", help="directory with StepMania packs")
+    corpus.add_argument("-o", "--out", default="corpus_stats.json",
+                        help="index output path")
+
     args = parser.parse_args()
     if args.cmd == "build-patterns":
         from .patterns import build_library
         build_library(args.training, args.out)
+        return 0
+    if args.cmd == "build-corpus-stats":
+        from .metrics import build_corpus_index
+        build_corpus_index(args.training, args.out)
         return 0
     return _convert(args)
 
@@ -56,7 +68,8 @@ def _convert(args) -> int:
     failures = 0
     for osz in osz_files:
         try:
-            ssc = convert_osz(str(osz), args.out, seed=args.seed, lib=lib)
+            ssc = convert_osz(str(osz), args.out, seed=args.seed, lib=lib,
+                              beginner=not args.no_beginner)
             print(f"ok   {osz.name} -> {ssc}")
         except Exception as exc:  # keep converting the rest of the batch
             failures += 1

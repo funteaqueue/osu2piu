@@ -1,25 +1,21 @@
-"""Orchestrate: .osz in -> StepMania song folder out."""
+"""Orchestrate: .osz in -> StepMania song folder out.
+
+Generation itself lives in chartjson (shared with the engine API); this
+module is the CLI-facing wrapper that extracts media and writes the .ssc.
+"""
 from __future__ import annotations
 
 import random
 import re
 from pathlib import Path
 
-from .generator import RuleGenerator
-from .holds import classify
-from .matcher import PatternMatcher
-from .osu_parser import Beatmap, load_osz
-from .patterns import (PHRASE_SPLIT_GAP, Library, avg_active_nps,
-                       decode_panels, fast_share, p95_speed, panel_char)
-from .ssc_writer import Chart, Song, render_ssc
-from .timing import BeatGrid, quantize
-
-# window (seconds) for the peak-density difficulty estimate
-DENSITY_WINDOW_S = 5.0
+from .chartjson import build_project, render_project_ssc
+from .osu_parser import load_osz
+from .patterns import Library
 
 
 def convert_osz(osz_path: str, out_root: str, seed: int | None = None,
-                lib: Library | None = None) -> Path:
+                lib: Library | None = None, beginner: bool = True) -> Path:
     rng = random.Random(seed)
     beatmaps, zf = load_osz(osz_path)
     if not beatmaps:
@@ -33,210 +29,24 @@ def convert_osz(osz_path: str, out_root: str, seed: int | None = None,
     music = _extract(zf, names, ref.audio_filename, song_dir)
     background = _extract(zf, names, ref.background, song_dir)
 
-    grid = BeatGrid(ref.red_points)  # difficulties of one set share timing
-    grid.apply_shift_for(min(grid.beat_at(h.time) for bm in beatmaps for h in bm.hit_objects))
+    project = build_project(beatmaps, rng, lib, beginner=beginner)
+    project["song"]["audioFile"] = music
+    project["song"]["background"] = background
 
-    song = Song(
-        title=ref.title,
-        artist=ref.artist,
-        credit=f"{ref.creator} / osu2piu",
-        music=music,
-        background=background,
-        offset=grid.offset_seconds,
-        sample_start=max(ref.preview_time, 0.0) / 1000.0,
-        bpms=grid.bpm_changes(),
-    )
-    for bm in beatmaps:
-        chart = _build_chart(bm, grid, rng, lib)
-        song.charts.append(chart)
-        s = chart.stats
-        total = max(1, s["exact"] + s["downgrade"] + s["fallback"])
-        print(f"  [{bm.version:>20s}] lvl {chart.meter:>2d}  "
-              f"exact {s['exact'] / total:4.0%}  downgrade {s['downgrade'] / total:4.0%}  "
-              f"fallback {s['fallback'] / total:4.0%}  jumps {s['jump']}  dropped {s['dropped']}"
-              + (f"  src-meter {chart.avg_source_meter:.1f}" if chart.avg_source_meter else ""))
+    for chart in project["charts"]:
+        t = chart["stats"]["tiers"]
+        total = max(1, t["exact"] + t["downgrade"] + t["fallback"])
+        meters = [n["origin"]["sourceMeter"] for n in chart["notes"]
+                  if n["origin"]["sourceMeter"]]
+        src = (f"  src-meter {sum(meters) / len(meters):.1f}" if meters else "")
+        print(f"  [{chart['name']:>20s}] lvl {chart['level']:>2d}  "
+              f"exact {t['exact'] / total:4.0%}  downgrade {t['downgrade'] / total:4.0%}  "
+              f"fallback {t['fallback'] / total:4.0%}  jumps {t['jump']}  "
+              f"dropped {t['dropped']}" + src)
 
     ssc_path = song_dir / (song_dir.name + ".ssc")
-    ssc_path.write_text(render_ssc(song), encoding="utf-8")
+    ssc_path.write_text(render_project_ssc(project), encoding="utf-8")
     return ssc_path
-
-
-def _build_chart(bm: Beatmap, grid: BeatGrid, rng: random.Random,
-                 lib: Library | None) -> Chart:
-    level = _pre_level(bm, lib)
-    events = classify(bm, grid, level, rng,
-                      hold_target=lib.hold_target(level) if lib else None,
-                      jump_target=lib.jump_target(level) if lib else None)
-    tokens = [ev.token for ev in events]
-    phrase_starts = _phrase_starts(events)
-
-    matcher = PatternMatcher(lib, rng, level) if lib else None
-    gen = RuleGenerator(rng)
-    cells: dict[int, list[str]] = {}
-    placed: list[str | None] = []
-    active_holds: dict[int, float] = {}
-    stats = {"exact": 0, "downgrade": 0, "fallback": 0, "jump": 0, "dropped": 0}
-    meters_used: list[int] = []
-
-    i = 0
-    while i < len(events):
-        active_holds = {p: e for p, e in active_holds.items()
-                        if e > events[i].beat + 1e-6}
-        emission = None
-        if matcher:
-            emission = matcher.match(events, tokens, i, placed,
-                                     active_holds, _phrase_of(phrase_starts, i))
-        if emission:
-            meters_used.append(emission.source_meter)
-            for char in emission.panels:
-                ev = events[i]
-                panels = decode_panels(char)
-                if len(panels) == 2:
-                    ok = _place_jump(cells, ev, panels)
-                    if ok:
-                        gen.observe_jump(ev.beat, panels)
-                else:
-                    ok = _place(cells, ev, panels[0],
-                                gen_observe=(gen, active_holds))
-                placed.append(char if ok else None)
-                stats[emission.tier if ok else "dropped"] += 1
-                i += 1
-        elif events[i].jump:  # no pattern covers this jump: rule generator
-            ev = events[i]
-            pair = gen.jump(ev.beat)
-            if pair is not None and _place_jump(cells, ev, pair):
-                stats["jump"] += 1
-                placed.append(panel_char(*pair))
-            else:
-                stats["dropped"] += 1
-                placed.append(None)
-            i += 1
-        else:
-            ev = events[i]
-            hold_end = ev.end_beat if ev.kind in "OL" else None
-            panel = gen.step(ev.beat, hold_end=hold_end,
-                             fgap=min(ev.fgap, 99.0))
-            if panel is None:
-                placed.append(None)
-                stats["dropped"] += 1
-            else:
-                ok = _place(cells, ev, panel, gen_observe=None,
-                            holds=active_holds)
-                placed.append(str(panel) if ok else None)
-                stats["fallback" if ok else "dropped"] += 1
-            i += 1
-
-    return Chart(
-        description=bm.version,
-        meter=_final_level(cells, grid, lib),
-        cells=cells,
-        dropped=stats["dropped"],
-        stats=stats,
-        avg_source_meter=(sum(meters_used) / len(meters_used)) if meters_used else 0.0,
-    )
-
-
-def _place_jump(cells, ev, pair) -> bool:
-    row = quantize(ev.beat)
-    cols = cells.setdefault(row, list("00000"))
-    free = [p for p in pair if cols[p] == "0"]
-    if not free:
-        return False
-    for p in free:  # a hold tail may occupy one panel; keep the other
-        cols[p] = "1"
-    return True
-
-
-def _place(cells, ev, panel, gen_observe=None, holds=None) -> bool:
-    row = quantize(ev.beat)
-    is_hold = ev.kind in "OL"
-    end_row = quantize(ev.end_beat) if is_hold else row
-    if is_hold and end_row <= row:
-        is_hold = False
-
-    head = cells.setdefault(row, list("00000"))
-    if head[panel] != "0":
-        return False  # collision with an earlier hold tail on the same row
-    if is_hold:
-        tail = cells.setdefault(end_row, list("00000"))
-        head[panel] = "2"
-        tail[panel] = "3"
-    else:
-        head[panel] = "1"
-
-    if gen_observe is not None:
-        gen, active = gen_observe
-        gen.observe(ev.beat, panel, hold_end=ev.end_beat if is_hold else None)
-        if is_hold:
-            active[panel] = ev.end_beat
-    elif holds is not None and is_hold:
-        holds[panel] = ev.end_beat
-    return True
-
-
-def _phrase_starts(events) -> list[int]:
-    return [i for i, ev in enumerate(events)
-            if i == 0 or ev.fgap > PHRASE_SPLIT_GAP]
-
-
-def _phrase_of(starts: list[int], i: int) -> int:
-    lo = 0
-    for s in starts:
-        if s <= i:
-            lo = s
-        else:
-            break
-    return lo
-
-
-def _pre_level(bm: Beatmap, lib: Library | None) -> int:
-    times = [h.time for h in bm.hit_objects]
-    if lib:
-        secs = [t / 1000.0 for t in times]
-        return lib.estimate_level(_peak_nps(times), _avg_nps(times),
-                                  p95_speed(secs), fast_share(secs))
-    return max(1, min(24, round(_peak_nps(times) * 2.3)))
-
-
-def _final_level(cells, grid: BeatGrid, lib: Library | None) -> int:
-    """Level from the GENERATED chart's density (at high levels most sliders
-    became taps, so osu object counts under-measure). Rows holding only hold
-    tails ('3') are not steps."""
-    times = sorted(_row_time(grid, row) for row, chars in cells.items()
-                   if any(c in "12" for c in chars))
-    if lib:
-        secs = [t / 1000.0 for t in times]
-        return lib.estimate_level(_peak_nps(times), _avg_nps(times),
-                                  p95_speed(secs), fast_share(secs))
-    return max(1, min(24, round(_peak_nps(times) * 2.3)))
-
-
-def _avg_nps(times_ms: list[float]) -> float | None:
-    return avg_active_nps(sorted(t / 1000.0 for t in times_ms))
-
-
-def _row_time(grid: BeatGrid, row: int) -> float:
-    beat = row / 12.0 - grid.shift
-    start_ms, beat_length, start_beat = grid.segments[0]
-    for s in grid.segments:
-        if s[2] <= beat + 1e-9:
-            start_ms, beat_length, start_beat = s
-        else:
-            break
-    return start_ms + (beat - start_beat) * beat_length
-
-
-def _peak_nps(times_ms: list[float]) -> float:
-    if len(times_ms) < 2:
-        return 0.5
-    times = sorted(times_ms)
-    window = DENSITY_WINDOW_S * 1000.0
-    peak, j = 0, 0
-    for i, t in enumerate(times):
-        while times[j] < t - window:
-            j += 1
-        peak = max(peak, i - j + 1)
-    return peak / DENSITY_WINDOW_S
 
 
 def _extract(zf, names: dict[str, str], filename: str, song_dir: Path) -> str:
