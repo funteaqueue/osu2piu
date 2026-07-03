@@ -9,7 +9,7 @@ from .generator import RuleGenerator
 from .holds import classify
 from .matcher import PatternMatcher
 from .osu_parser import Beatmap, load_osz
-from .patterns import PHRASE_SPLIT_GAP, Library, p95_speed
+from .patterns import PHRASE_SPLIT_GAP, Library, fast_share, p95_speed
 from .ssc_writer import Chart, Song, render_ssc
 from .timing import BeatGrid, quantize
 
@@ -162,8 +162,9 @@ def _phrase_of(starts: list[int], i: int) -> int:
 def _pre_level(bm: Beatmap, lib: Library | None) -> int:
     times = [h.time for h in bm.hit_objects]
     if lib:
+        secs = [t / 1000.0 for t in times]
         return lib.estimate_level(_peak_nps(times), _avg_nps(times),
-                                  p95_speed([t / 1000.0 for t in times]))
+                                  p95_speed(secs), fast_share(secs))
     return max(1, min(24, round(_peak_nps(times) * 2.3)))
 
 
@@ -174,8 +175,9 @@ def _final_level(cells, grid: BeatGrid, lib: Library | None) -> int:
     times = sorted(_row_time(grid, row) for row, chars in cells.items()
                    if any(c in "12" for c in chars))
     if lib:
+        secs = [t / 1000.0 for t in times]
         return lib.estimate_level(_peak_nps(times), _avg_nps(times),
-                                  p95_speed([t / 1000.0 for t in times]))
+                                  p95_speed(secs), fast_share(secs))
     return max(1, min(24, round(_peak_nps(times) * 2.3)))
 
 

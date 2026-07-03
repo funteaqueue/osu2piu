@@ -56,6 +56,18 @@ def p95_speed(times_s: list[float]) -> float | None:
     return 1.0 / gaps[max(0, int(len(gaps) * 0.05) - 1)]
 
 
+FAST_STEP_S = 0.115  # a step this soon after the previous one is "fast"
+
+
+def fast_share(times_s: list[float]) -> float | None:
+    """Fraction of steps arriving within FAST_STEP_S of the previous one —
+    how much of the chart IS the fast content."""
+    gaps = [b - a for a, b in zip(times_s, times_s[1:]) if b - a > 0.01]
+    if len(gaps) < 20:
+        return None
+    return sum(1 for g in gaps if g <= FAST_STEP_S) / len(gaps)
+
+
 class Library:
     def __init__(self, phrases, tri, level_table, hold_share=None,
                  avg_table=None, speed_table=None):
@@ -83,10 +95,13 @@ class Library:
                    d.get("hold_share"), d.get("avg_table"), d.get("speed_table"))
 
     def estimate_level(self, peak_nps: float, avg_nps: float | None = None,
-                       speed: float | None = None) -> int:
-        """Three rulers, averaged: burst density (peak), stamina (sustained
-        density), and absolute speed of the hardest moments. Speed catches
-        short 16th bursts at high BPM that windowed density dilutes."""
+                       speed: float | None = None,
+                       fast_share: float | None = None) -> int:
+        """Three rulers — burst density (peak), stamina (sustained density),
+        absolute speed of the hardest moments — averaged; PLUS a skill gate:
+        a player must survive the hardest demand, so when fast steps are a
+        real presence (fast_share), the speed ruler acts as a floor rather
+        than being averaged away. Rare bursts discount the floor by 1."""
         if not self.level_table:
             return max(1, min(24, round(peak_nps * 2.3)))
         rulers = [min(self.level_table,
@@ -94,10 +109,16 @@ class Library:
         if avg_nps is not None and self.avg_table:
             rulers.append(min(self.avg_table,
                               key=lambda m: abs(self.avg_table[m] - avg_nps)))
+        lvl_speed = None
         if speed is not None and self.speed_table:
-            rulers.append(min(self.speed_table,
-                              key=lambda m: abs(self.speed_table[m] - speed)))
-        return int(sum(rulers) / len(rulers) + 0.5)
+            lvl_speed = min(self.speed_table,
+                            key=lambda m: abs(self.speed_table[m] - speed))
+            rulers.append(lvl_speed)
+        level = int(sum(rulers) / len(rulers) + 0.5)
+        if lvl_speed is not None and fast_share is not None and fast_share >= 0.02:
+            discount = 0 if fast_share >= 0.10 else 1
+            level = max(level, lvl_speed - discount)
+        return level
 
     def hold_target(self, level: int) -> float | None:
         """Fraction of notes that real charts of this level make holds."""
