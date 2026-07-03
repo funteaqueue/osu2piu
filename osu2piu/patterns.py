@@ -75,6 +75,18 @@ def p95_speed(times_s: list[float]) -> float | None:
     return 1.0 / gaps[max(0, int(len(gaps) * 0.05) - 1)]
 
 
+MAX_COUNTED_GAP_S = 2.0  # breaks credit at most this much rest toward avg density
+
+
+def avg_active_nps(times_s: list[float]) -> float | None:
+    """Sustained density over ACTIVE time: each inter-note gap counts at most
+    MAX_COUNTED_GAP_S, so mid-song breaks don't dilute the stamina ruler."""
+    if len(times_s) < 2:
+        return None
+    active = sum(min(b - a, MAX_COUNTED_GAP_S) for a, b in zip(times_s, times_s[1:]))
+    return len(times_s) / active if active > 15.0 else None
+
+
 FAST_STEP_S = 0.115  # a step this soon after the previous one is "fast"
 
 
@@ -181,9 +193,9 @@ def build_library(training_dir: str, out_path: str) -> Library:
             nps_by_meter[chart.meter].append(chart.peak_nps)
             share_by_meter[chart.meter].append(
                 sum(1 for s in chart.steps if s.is_hold) / len(chart.steps))
-            duration = chart.steps[-1].time - chart.steps[0].time
-            if duration > 20.0:
-                avg_by_meter[chart.meter].append(len(chart.steps) / duration)
+            avg = avg_active_nps([s.time for s in chart.steps])
+            if avg is not None:
+                avg_by_meter[chart.meter].append(avg)
             spd = p95_speed([s.time for s in chart.steps])
             if spd is not None:
                 speed_by_meter[chart.meter].append(spd)

@@ -9,8 +9,8 @@ from .generator import RuleGenerator
 from .holds import classify
 from .matcher import PatternMatcher
 from .osu_parser import Beatmap, load_osz
-from .patterns import (PHRASE_SPLIT_GAP, Library, decode_panels, fast_share,
-                       p95_speed, panel_char)
+from .patterns import (PHRASE_SPLIT_GAP, Library, avg_active_nps,
+                       decode_panels, fast_share, p95_speed, panel_char)
 from .ssc_writer import Chart, Song, render_ssc
 from .timing import BeatGrid, quantize
 
@@ -212,10 +212,7 @@ def _final_level(cells, grid: BeatGrid, lib: Library | None) -> int:
 
 
 def _avg_nps(times_ms: list[float]) -> float | None:
-    if len(times_ms) < 2:
-        return None
-    duration = (max(times_ms) - min(times_ms)) / 1000.0
-    return len(times_ms) / duration if duration > 20.0 else None
+    return avg_active_nps(sorted(t / 1000.0 for t in times_ms))
 
 
 def _row_time(grid: BeatGrid, row: int) -> float:
