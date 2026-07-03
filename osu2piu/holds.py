@@ -26,9 +26,19 @@ MAX_REPEAT_TAPS = 8         # cap on under-hold taps from one returning slider
 # fallback when converting without a pattern library (corpus-shaped curve)
 DEFAULT_HOLD_SHARE = ((4, 0.03), (8, 0.05), (12, 0.07), (15, 0.10), (21, 0.12), (99, 0.08))
 DEFAULT_JUMP_SHARE = 0.09  # corpus runs ~8-12% jump rows at every level
-# jumps land on emphasis; feet need room to gather and recover
-JUMP_MIN_GAP_BEFORE = 0.45   # folded beats
-JUMP_MIN_GAP_AFTER = 0.30
+# jumps land on emphasis; feet need room to gather and recover. Real charts
+# scale that room by level (corpus p25 of gaps around jumps, folded beats):
+# newcomers get whole beats, high levels jump inside 8th runs.
+def _jump_gap_mins(level: int) -> tuple[float, float]:  # (before, after)
+    if level <= 2:
+        return 2.0, 2.0
+    if level <= 3:
+        return 1.0, 1.5
+    if level <= 8:
+        return 0.75, 1.0
+    if level <= 12:
+        return 0.5, 0.5
+    return 0.45, 0.5
 
 # maps far more slider-heavy than a typical osu map (~50%) get a bigger hold
 # budget — the mapper heard the song as sustained phrases, let that through
@@ -87,6 +97,7 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
     accepted |= spinner_holds
 
     # pass 3: jumps land on mapper-marked emphasis, corpus-budgeted
+    min_before, min_after = _jump_gap_mins(level)
     jump_scores: dict[int, float] = {}
     for i, ho in enumerate(objs):
         if i in accepted or ho.kind == "spinner":
@@ -95,7 +106,7 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
         gap_prev = _fgap(objs[i - 1].end_time, ho.time, fbpm) if i else 99.0
         gap_next = (_fgap(ho.end_time, objs[i + 1].time, fbpm)
                     if i + 1 < len(objs) else 99.0)
-        if gap_prev < JUMP_MIN_GAP_BEFORE or gap_next < JUMP_MIN_GAP_AFTER:
+        if gap_prev < min_before or gap_next < min_after:
             continue
         score = 0.0
         if ho.finish:
