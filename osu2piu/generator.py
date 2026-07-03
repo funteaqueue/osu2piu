@@ -21,6 +21,12 @@ DL, UL, C, UR, DR = range(5)
 FOOT_PANELS = {"L": (DL, UL, C), "R": (C, UR, DR)}
 HOME = {"L": DL, "R": DR}
 
+# jump vocabulary: (left-foot panel, right-foot panel, corpus frequency)
+JUMP_PAIRS = (
+    (UL, UR, 14.1), (DL, DR, 13.2), (C, UR, 12.8), (UL, C, 12.6),
+    (DL, UR, 10.6), (UL, DR, 10.5), (DL, C, 10.5), (C, DR, 10.5),
+)
+
 # gaps at or below this many beats count as "fast" (16ths and tighter)
 FAST_GAP = 0.26
 # gaps at or above this many beats count as a rest that resets the flow
@@ -91,6 +97,24 @@ class RuleGenerator:
         if hold_end is not None:
             self.hold_until[foot] = hold_end
         return panel
+
+    def jump(self, beat: float) -> tuple[int, int] | None:
+        """Pick a two-panel jump. Pair vocabulary and weights follow the
+        corpus (top/bottom rows, center+corner, diagonals — same-side pairs
+        are rare in real charts and skipped). Returns (left_panel, right_panel)."""
+        if self._is_holding("L", beat) or self._is_holding("R", beat):
+            return None  # jumps need both feet
+        pairs, weights = [], []
+        for lp, rp, freq in JUMP_PAIRS:
+            travel = abs(lp - self.pos["L"]) + abs(rp - self.pos["R"])
+            pairs.append((lp, rp))
+            weights.append(freq / (1.0 + 0.5 * travel))
+        lp, rp = self.rng.choices(pairs, weights)[0]
+        self.pos["L"], self.pos["R"] = lp, rp
+        self.last_panel = None
+        self.last_beat = beat
+        self.next_foot = self.rng.choice("LR")
+        return lp, rp
 
     def observe(self, beat: float, panel: int, hold_end: float | None = None) -> None:
         """Sync foot state with a step placed by the pattern matcher, so the

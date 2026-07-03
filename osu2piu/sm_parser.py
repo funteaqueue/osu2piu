@@ -38,6 +38,7 @@ class ParsedChart:
     source: str
     steps: list[Step]
     peak_nps: float
+    jump_share: float = 0.0  # jump rows / (steps + jump rows)
 
 
 def fold_bpm(bpm: float) -> float:
@@ -88,10 +89,11 @@ def _parse_chart(block: str, header: dict, source: str) -> ParsedChart | None:
     notes = tags.get("NOTES")
     if not notes:
         return None
-    steps = _rows_to_steps(_parse_rows(notes), bpms)
+    steps, n_jumps = _rows_to_steps(_parse_rows(notes), bpms)
     if len(steps) < 8:
         return None
-    return ParsedChart(meter, source, steps, _peak_nps(steps))
+    return ParsedChart(meter, source, steps, _peak_nps(steps),
+                       n_jumps / (len(steps) + n_jumps))
 
 
 def _parse_bpms(raw: str) -> list[tuple[float, float]]:
@@ -133,7 +135,7 @@ def _cell_char(cell: str) -> str:
 
 
 def _rows_to_steps(rows: list[tuple[float, list[str]]],
-                   bpms: list[tuple[float, float]]) -> list[Step]:
+                   bpms: list[tuple[float, float]]) -> tuple[list[Step], int]:
     clock = _BeatClock(bpms)
     events = []       # [beat, panel, tail_beat | None]
     open_holds: dict[int, float] = {}
@@ -179,7 +181,7 @@ def _rows_to_steps(rows: list[tuple[float, list[str]]],
         )
         steps.append(Step(beat, time, fgap, panel, tail is not None, fdur, under))
         prev_beat, prev_time = beat, time
-    return steps
+    return steps, len(jump_breaks)
 
 
 class _BeatClock:

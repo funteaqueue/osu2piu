@@ -70,20 +70,22 @@ def fast_share(times_s: list[float]) -> float | None:
 
 class Library:
     def __init__(self, phrases, tri, level_table, hold_share=None,
-                 avg_table=None, speed_table=None):
+                 avg_table=None, speed_table=None, jump_share=None):
         self.phrases = phrases          # list of {t, p, u, m}
         self.tri = tri                  # 6-char token key -> array('Q') of positions
         self.level_table = level_table  # meter -> median peak_nps
         self.hold_share = hold_share or {}  # meter -> fraction of steps that hold
         self.avg_table = avg_table or {}    # meter -> median sustained nps
         self.speed_table = speed_table or {}  # meter -> median p95 step speed
+        self.jump_share = jump_share or {}    # meter -> mean fraction of jump rows
 
     def save(self, path: str) -> None:
         with open(path, "wb") as f:
             pickle.dump(
                 {"phrases": self.phrases, "tri": self.tri,
                  "level_table": self.level_table, "hold_share": self.hold_share,
-                 "avg_table": self.avg_table, "speed_table": self.speed_table},
+                 "avg_table": self.avg_table, "speed_table": self.speed_table,
+                 "jump_share": self.jump_share},
                 f, protocol=pickle.HIGHEST_PROTOCOL,
             )
 
@@ -92,7 +94,8 @@ class Library:
         with open(path, "rb") as f:
             d = pickle.load(f)
         return cls(d["phrases"], d["tri"], d["level_table"],
-                   d.get("hold_share"), d.get("avg_table"), d.get("speed_table"))
+                   d.get("hold_share"), d.get("avg_table"),
+                   d.get("speed_table"), d.get("jump_share"))
 
     def estimate_level(self, peak_nps: float, avg_nps: float | None = None,
                        speed: float | None = None,
@@ -135,6 +138,13 @@ class Library:
         nearest = min(self.hold_share, key=lambda m: abs(m - level))
         return self.hold_share[nearest]
 
+    def jump_target(self, level: int) -> float | None:
+        """Fraction of rows that real charts of this level make jumps."""
+        if not self.jump_share:
+            return None
+        nearest = min(self.jump_share, key=lambda m: abs(m - level))
+        return self.jump_share[nearest]
+
 
 def build_library(training_dir: str, out_path: str) -> Library:
     phrases: list[dict] = []
@@ -145,6 +155,7 @@ def build_library(training_dir: str, out_path: str) -> Library:
 
     avg_by_meter: dict[int, list[float]] = defaultdict(list)
     speed_by_meter: dict[int, list[float]] = defaultdict(list)
+    jump_by_meter: dict[int, list[float]] = defaultdict(list)
     for i, f in enumerate(files):
         for chart in parse_ssc_file(f):
             n_charts += 1
@@ -157,6 +168,7 @@ def build_library(training_dir: str, out_path: str) -> Library:
             spd = p95_speed([s.time for s in chart.steps])
             if spd is not None:
                 speed_by_meter[chart.meter].append(spd)
+            jump_by_meter[chart.meter].append(chart.jump_share)
             for phrase_steps in _split_phrases(chart.steps):
                 phrases.append(_encode_phrase(phrase_steps, chart.meter))
         if (i + 1) % 500 == 0:
@@ -189,7 +201,14 @@ def build_library(training_dir: str, out_path: str) -> Library:
         m: statistics.median(v) for m, v in speed_by_meter.items()
         if len(v) >= 5 and m in level_table
     }
-    lib = Library(phrases, dict(tri), level_table, hold_share, avg_table, speed_table)
+    # mean, not median-of-users: jump-less charts are a legitimate style at
+    # every level, so the expected share includes them
+    jump_share = {
+        m: statistics.mean(v) for m, v in jump_by_meter.items()
+        if len(v) >= 10 and m in level_table
+    }
+    lib = Library(phrases, dict(tri), level_table, hold_share, avg_table,
+                  speed_table, jump_share)
     lib.save(out_path)
 
     n_steps = sum(len(p["p"]) for p in phrases)

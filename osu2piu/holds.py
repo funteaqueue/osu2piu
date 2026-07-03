@@ -25,6 +25,10 @@ MAX_REPEAT_TAPS = 8         # cap on under-hold taps from one returning slider
 
 # fallback when converting without a pattern library (corpus-shaped curve)
 DEFAULT_HOLD_SHARE = ((4, 0.03), (8, 0.05), (12, 0.07), (15, 0.10), (21, 0.12), (99, 0.08))
+DEFAULT_JUMP_SHARE = 0.09  # corpus runs ~8-12% jump rows at every level
+# jumps land on emphasis; feet need room to gather and recover
+JUMP_MIN_GAP_BEFORE = 0.45   # folded beats
+JUMP_MIN_GAP_AFTER = 0.30
 
 # maps far more slider-heavy than a typical osu map (~50%) get a bigger hold
 # budget — the mapper heard the song as sustained phrases, let that through
@@ -39,18 +43,24 @@ class NoteEvent:
     fgap: float        # folded-beat gap to previous event (inf at song start)
     kind: str          # 'T' | 'O' | 'L'
     under_hold: bool = False
+    jump: bool = False  # two-panel press; placed by the rule generator
 
     @property
     def token(self) -> str:
         from .patterns import gap_class
-        return gap_class(min(self.fgap, 99.0)) + self.kind
+        # 'J' never occurs in harvested tokens, so patterns cannot seed or
+        # extend across a jump — it acts as phrase punctuation for matching
+        return gap_class(min(self.fgap, 99.0)) + ("J" if self.jump else self.kind)
 
 
 def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
-             hold_target: float | None = None) -> list[NoteEvent]:
+             hold_target: float | None = None,
+             jump_target: float | None = None) -> list[NoteEvent]:
     objs = bm.hit_objects
     if hold_target is None:
         hold_target = _default_hold_share(level)
+    if jump_target is None:
+        jump_target = DEFAULT_JUMP_SHARE
     slider_share = sum(1 for o in objs if o.kind == "slider") / max(1, len(objs))
     lo, hi = SLIDER_BOOST_RANGE
     hold_target *= min(hi, max(lo, slider_share / BASELINE_SLIDER_SHARE))
@@ -76,6 +86,35 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
     accepted = set(sorted(rests, key=rests.get, reverse=True)[:budget])
     accepted |= spinner_holds
 
+    # pass 3: jumps land on mapper-marked emphasis, corpus-budgeted
+    jump_scores: dict[int, float] = {}
+    for i, ho in enumerate(objs):
+        if i in accepted or ho.kind == "spinner":
+            continue
+        fbpm = fbpms[i]
+        gap_prev = _fgap(objs[i - 1].end_time, ho.time, fbpm) if i else 99.0
+        gap_next = (_fgap(ho.end_time, objs[i + 1].time, fbpm)
+                    if i + 1 < len(objs) else 99.0)
+        if gap_prev < JUMP_MIN_GAP_BEFORE or gap_next < JUMP_MIN_GAP_AFTER:
+            continue
+        score = 0.0
+        if ho.finish:
+            score += 3.0          # cymbal: the mapper heard an accent here
+        if ho.clap:
+            score += 1.2
+        if gap_next >= 1.5:
+            score += 1.8          # phrase-final note
+        if gap_prev >= 1.5:
+            score += 1.2          # phrase entrance
+        beat = grid.beat_at(ho.time)
+        if abs(beat - round(beat)) < 1e-3:
+            score += 0.8 if round(beat) % 4 == 0 else 0.4  # (down)beat alignment
+        if score >= 1.0:
+            jump_scores[i] = score * rng.uniform(0.9, 1.1)
+    jump_budget = max(0, round(jump_target * len(objs)))
+    accepted_jumps = set(
+        sorted(jump_scores, key=jump_scores.get, reverse=True)[:jump_budget])
+
     events: list[NoteEvent] = []
     recent_holds = 0
     for i, ho in enumerate(objs):
@@ -91,7 +130,8 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
         recent_holds = recent_holds + 1 if (as_hold and gap_prev < 1.0) else (1 if as_hold else 0)
 
         if not as_hold:
-            events.append(NoteEvent(beat, beat, gap_prev, "T"))
+            events.append(NoteEvent(beat, beat, gap_prev, "T",
+                                    jump=i in accepted_jumps))
             continue
 
         kind = "L" if fdur >= LONG_HOLD_FBEATS else "O"

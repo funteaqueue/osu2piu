@@ -52,7 +52,7 @@ def convert_osz(osz_path: str, out_root: str, seed: int | None = None,
         total = max(1, s["exact"] + s["downgrade"] + s["fallback"])
         print(f"  [{bm.version:>20s}] lvl {chart.meter:>2d}  "
               f"exact {s['exact'] / total:4.0%}  downgrade {s['downgrade'] / total:4.0%}  "
-              f"fallback {s['fallback'] / total:4.0%}  dropped {s['dropped']}"
+              f"fallback {s['fallback'] / total:4.0%}  jumps {s['jump']}  dropped {s['dropped']}"
               + (f"  src-meter {chart.avg_source_meter:.1f}" if chart.avg_source_meter else ""))
 
     ssc_path = song_dir / (song_dir.name + ".ssc")
@@ -64,7 +64,8 @@ def _build_chart(bm: Beatmap, grid: BeatGrid, rng: random.Random,
                  lib: Library | None) -> Chart:
     level = _pre_level(bm, lib)
     events = classify(bm, grid, level, rng,
-                      hold_target=lib.hold_target(level) if lib else None)
+                      hold_target=lib.hold_target(level) if lib else None,
+                      jump_target=lib.jump_target(level) if lib else None)
     tokens = [ev.token for ev in events]
     phrase_starts = _phrase_starts(events)
 
@@ -73,13 +74,22 @@ def _build_chart(bm: Beatmap, grid: BeatGrid, rng: random.Random,
     cells: dict[int, list[str]] = {}
     placed: list[int | None] = []
     active_holds: dict[int, float] = {}
-    stats = {"exact": 0, "downgrade": 0, "fallback": 0, "dropped": 0}
+    stats = {"exact": 0, "downgrade": 0, "fallback": 0, "jump": 0, "dropped": 0}
     meters_used: list[int] = []
 
     i = 0
     while i < len(events):
         active_holds = {p: e for p, e in active_holds.items()
                         if e > events[i].beat + 1e-6}
+        if events[i].jump:
+            pair = gen.jump(events[i].beat)
+            if pair is not None and _place_jump(cells, events[i], pair):
+                stats["jump"] += 1
+            else:
+                stats["dropped"] += 1
+            placed.append(None)  # matching restarts after a jump anyway
+            i += 1
+            continue
         emission = None
         if matcher:
             emission = matcher.match(events, tokens, i, placed,
@@ -117,6 +127,17 @@ def _build_chart(bm: Beatmap, grid: BeatGrid, rng: random.Random,
     )
 
 
+def _place_jump(cells, ev, pair) -> bool:
+    row = quantize(ev.beat)
+    cols = cells.setdefault(row, list("00000"))
+    free = [p for p in pair if cols[p] == "0"]
+    if not free:
+        return False
+    for p in free:  # a hold tail may occupy one panel; keep the other
+        cols[p] = "1"
+    return True
+
+
 def _place(cells, ev, panel, gen_observe=None, holds=None) -> bool:
     row = quantize(ev.beat)
     is_hold = ev.kind in "OL"
@@ -146,7 +167,7 @@ def _place(cells, ev, panel, gen_observe=None, holds=None) -> bool:
 
 def _phrase_starts(events) -> list[int]:
     return [i for i, ev in enumerate(events)
-            if i == 0 or ev.fgap > PHRASE_SPLIT_GAP]
+            if i == 0 or ev.fgap > PHRASE_SPLIT_GAP or events[i - 1].jump]
 
 
 def _phrase_of(starts: list[int], i: int) -> int:

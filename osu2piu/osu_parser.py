@@ -20,6 +20,8 @@ class HitObject:
     kind: str            # 'circle' | 'slider' | 'spinner'
     end_time: float      # ms (== time for circles)
     repeats: int = 1
+    finish: bool = False  # finish/cymbal hitsound = mapper-marked emphasis
+    clap: bool = False
 
 
 @dataclass
@@ -107,14 +109,20 @@ def _parse_hit_object(line: str, bm: Beatmap) -> HitObject | None:
     if len(parts) < 4:
         return None
     x, y, time, obj_type = int(parts[0]), int(parts[1]), float(parts[2]), int(parts[3])
+    try:
+        hitsound = int(parts[4])
+    except (ValueError, IndexError):
+        hitsound = 0
+    finish, clap = bool(hitsound & 4), bool(hitsound & 8)
 
     if obj_type & 1:  # circle
-        return HitObject(x, y, time, "circle", time)
+        return HitObject(x, y, time, "circle", time, finish=finish, clap=clap)
     if obj_type & 2:  # slider
         repeats = int(parts[6]) if len(parts) > 6 else 1
         length = float(parts[7]) if len(parts) > 7 else 0.0
         duration = _slider_duration(time, length, bm) * repeats
-        return HitObject(x, y, time, "slider", time + duration, repeats)
+        return HitObject(x, y, time, "slider", time + duration, repeats,
+                         finish=finish, clap=clap)
     if obj_type & 8:  # spinner
         end_time = float(parts[5]) if len(parts) > 5 else time
         return HitObject(x, y, time, "spinner", end_time)
