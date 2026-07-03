@@ -232,10 +232,10 @@ def build_library(training_dir: str, out_path: str) -> Library:
         m: statistics.median(v) for m, v in speed_by_meter.items()
         if len(v) >= 5 and m in level_table
     }
-    # mean, not median-of-users: jump-less charts are a legitimate style at
-    # every level, so the expected share includes them
+    # median: nearly every chart jumps (99%), and the mean is inflated by
+    # jump-heavy outliers — the typical chart is the right budget
     jump_share = {
-        m: statistics.mean(v) for m, v in jump_by_meter.items()
+        m: statistics.median(v) for m, v in jump_by_meter.items()
         if len(v) >= 10 and m in level_table
     }
     lib = Library(phrases, dict(tri), level_table, hold_share, avg_table,
