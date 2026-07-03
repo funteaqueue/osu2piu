@@ -9,7 +9,8 @@ from .generator import RuleGenerator
 from .holds import classify
 from .matcher import PatternMatcher
 from .osu_parser import Beatmap, load_osz
-from .patterns import PHRASE_SPLIT_GAP, Library, fast_share, p95_speed
+from .patterns import (PHRASE_SPLIT_GAP, Library, decode_panels, fast_share,
+                       p95_speed, panel_char)
 from .ssc_writer import Chart, Song, render_ssc
 from .timing import BeatGrid, quantize
 
@@ -72,7 +73,7 @@ def _build_chart(bm: Beatmap, grid: BeatGrid, rng: random.Random,
     matcher = PatternMatcher(lib, rng, level) if lib else None
     gen = RuleGenerator(rng)
     cells: dict[int, list[str]] = {}
-    placed: list[int | None] = []
+    placed: list[str | None] = []
     active_holds: dict[int, float] = {}
     stats = {"exact": 0, "downgrade": 0, "fallback": 0, "jump": 0, "dropped": 0}
     meters_used: list[int] = []
@@ -81,27 +82,35 @@ def _build_chart(bm: Beatmap, grid: BeatGrid, rng: random.Random,
     while i < len(events):
         active_holds = {p: e for p, e in active_holds.items()
                         if e > events[i].beat + 1e-6}
-        if events[i].jump:
-            pair = gen.jump(events[i].beat)
-            if pair is not None and _place_jump(cells, events[i], pair):
-                stats["jump"] += 1
-            else:
-                stats["dropped"] += 1
-            placed.append(None)  # matching restarts after a jump anyway
-            i += 1
-            continue
         emission = None
         if matcher:
             emission = matcher.match(events, tokens, i, placed,
                                      active_holds, _phrase_of(phrase_starts, i))
         if emission:
             meters_used.append(emission.source_meter)
-            for panel in emission.panels:
+            for char in emission.panels:
                 ev = events[i]
-                ok = _place(cells, ev, panel, gen_observe=(gen, active_holds))
-                placed.append(panel if ok else None)
+                panels = decode_panels(char)
+                if len(panels) == 2:
+                    ok = _place_jump(cells, ev, panels)
+                    if ok:
+                        gen.observe_jump(ev.beat, panels)
+                else:
+                    ok = _place(cells, ev, panels[0],
+                                gen_observe=(gen, active_holds))
+                placed.append(char if ok else None)
                 stats[emission.tier if ok else "dropped"] += 1
                 i += 1
+        elif events[i].jump:  # no pattern covers this jump: rule generator
+            ev = events[i]
+            pair = gen.jump(ev.beat)
+            if pair is not None and _place_jump(cells, ev, pair):
+                stats["jump"] += 1
+                placed.append(panel_char(*pair))
+            else:
+                stats["dropped"] += 1
+                placed.append(None)
+            i += 1
         else:
             ev = events[i]
             hold_end = ev.end_beat if ev.kind in "OL" else None
@@ -113,7 +122,7 @@ def _build_chart(bm: Beatmap, grid: BeatGrid, rng: random.Random,
             else:
                 ok = _place(cells, ev, panel, gen_observe=None,
                             holds=active_holds)
-                placed.append(panel if ok else None)
+                placed.append(str(panel) if ok else None)
                 stats["fallback" if ok else "dropped"] += 1
             i += 1
 
@@ -167,7 +176,7 @@ def _place(cells, ev, panel, gen_observe=None, holds=None) -> bool:
 
 def _phrase_starts(events) -> list[int]:
     return [i for i, ev in enumerate(events)
-            if i == 0 or ev.fgap > PHRASE_SPLIT_GAP or events[i - 1].jump]
+            if i == 0 or ev.fgap > PHRASE_SPLIT_GAP]
 
 
 def _phrase_of(starts: list[int], i: int) -> int:

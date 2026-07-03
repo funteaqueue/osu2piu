@@ -30,6 +30,7 @@ class Step:
     is_hold: bool
     fdur: float          # folded-beat hold duration (0 for taps)
     under_hold: bool
+    panel2: int | None = None  # second panel of a two-tap jump
 
 
 @dataclass
@@ -93,7 +94,7 @@ def _parse_chart(block: str, header: dict, source: str) -> ParsedChart | None:
     if len(steps) < 8:
         return None
     return ParsedChart(meter, source, steps, _peak_nps(steps),
-                       n_jumps / (len(steps) + n_jumps))
+                       n_jumps / len(steps))
 
 
 def _parse_bpms(raw: str) -> list[tuple[float, float]]:
@@ -137,37 +138,42 @@ def _cell_char(cell: str) -> str:
 def _rows_to_steps(rows: list[tuple[float, list[str]]],
                    bpms: list[tuple[float, float]]) -> tuple[list[Step], int]:
     clock = _BeatClock(bpms)
-    events = []       # [beat, panel, tail_beat | None]
+    events = []       # [beat, panel, tail_beat | None, panel2 | None]
     open_holds: dict[int, float] = {}
-    jump_breaks: list[float] = []
+    breaks: list[float] = []
+    n_jumps = 0
 
     for beat, cells in rows:
         for col, ch in enumerate(cells):
             if ch == "3" and col in open_holds:
-                events.append([open_holds.pop(col), col, beat])
+                events.append([open_holds.pop(col), col, beat, None])
         starts = [c for c, ch in enumerate(cells) if ch in "124"]
+        if len(starts) == 2 and all(cells[c] == "1" for c in starts):
+            n_jumps += 1  # plain two-tap jump: a first-class step
+            events.append([beat, starts[0], None, starts[1]])
+            continue
         if len(starts) >= 2:
-            # jumps are out of scope for v1 patterns: break the phrase here
-            jump_breaks.append(beat)
+            # brackets / jump-holds stay out of scope: break the phrase
+            breaks.append(beat)
             continue
         for col in starts:
             if cells[col] == "1":
-                events.append([beat, col, None])
+                events.append([beat, col, None, None])
             else:
                 open_holds[col] = beat
     for col, head in open_holds.items():  # unclosed holds degrade to taps
-        events.append([head, col, None])
+        events.append([head, col, None, None])
     events.sort(key=lambda e: e[0])
 
     steps: list[Step] = []
     prev_beat = prev_time = None
     break_i = 0
-    for beat, panel, tail in events:
+    for beat, panel, tail, panel2 in events:
         time = clock.time_at(beat)
         fbpm = fold_bpm(clock.bpm_at(beat))
-        while break_i < len(jump_breaks) and jump_breaks[break_i] <= beat:
+        while break_i < len(breaks) and breaks[break_i] <= beat:
             break_i += 1
-        broke = break_i > 0 and prev_beat is not None and jump_breaks[break_i - 1] > prev_beat
+        broke = break_i > 0 and prev_beat is not None and breaks[break_i - 1] > prev_beat
         if prev_time is None or broke:
             fgap = PHRASE_BREAK
         else:
@@ -175,13 +181,14 @@ def _rows_to_steps(rows: list[tuple[float, list[str]]],
         fdur = 0.0
         if tail is not None:
             fdur = (clock.time_at(tail) - time) * fbpm / 60.0
-        under = any(
+        under = panel2 is None and any(
             e[2] is not None and e[0] < beat < e[2] and e[1] != panel
             for e in events
         )
-        steps.append(Step(beat, time, fgap, panel, tail is not None, fdur, under))
+        steps.append(Step(beat, time, fgap, panel, tail is not None, fdur,
+                          under, panel2))
         prev_beat, prev_time = beat, time
-    return steps, len(jump_breaks)
+    return steps, n_jumps
 
 
 class _BeatClock:

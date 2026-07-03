@@ -109,7 +109,7 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
         beat = grid.beat_at(ho.time)
         if abs(beat - round(beat)) < 1e-3:
             score += 0.8 if round(beat) % 4 == 0 else 0.4  # (down)beat alignment
-        if score >= 1.0:
+        if score >= 0.75:  # measure downbeats alone qualify (stream jumps)
             jump_scores[i] = score * rng.uniform(0.9, 1.1)
     jump_budget = max(0, round(jump_target * len(objs)))
     accepted_jumps = set(

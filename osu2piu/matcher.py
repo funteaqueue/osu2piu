@@ -26,7 +26,7 @@ METER_WINDOW = 3       # |source meter - target level| tolerance
 
 @dataclass
 class Emission:
-    panels: list[int]   # one per osu event, starting at the query position
+    panels: list[str]   # panel chars ('0'-'4' or pair 'A'-'J'), one per event
     tier: str           # 'exact' | 'downgrade'
     source_meter: int
 
@@ -46,7 +46,7 @@ class PatternMatcher:
         ]
 
     def match(self, events: list[NoteEvent], tokens: list[str], i: int,
-              placed: list[int], active_holds: dict[int, float],
+              placed: list[str | None], active_holds: dict[int, float],
               phrase_start: int) -> Emission | None:
         """events/tokens: full streams; i: index to generate from; placed:
         panels for events[:i] (None where dropped); active_holds:
@@ -72,8 +72,8 @@ class PatternMatcher:
         window = tokens[start:start + MAX_MATCH]
         if len(window) < 3 or len(window) <= overlap:
             return None
-        if not exact:
-            window = [t[0] + "T" for t in window]
+        if not exact:  # rhythm-only tier: relax holds to taps, keep jumps
+            window = [t[0] + ("T" if t[1] in "OL" else t[1]) for t in window]
         key = "".join(window[:3])
         bucket = self.lib.tri.get(key)
         if not bucket:
@@ -88,16 +88,14 @@ class PatternMatcher:
                 continue
             off = pos % POS_SHIFT
             tok, panels = ph["t"], ph["p"]
-            if overlap and panels[off:off + overlap] != "".join(
-                    str(p) for p in placed[start:i]):
+            if overlap and panels[off:off + overlap] != "".join(placed[start:i]):
                 continue
             n = 3
             limit = min(len(window), len(tok) // 2 - off)
             while n < limit and tok[(off + n) * 2:(off + n + 1) * 2] == window[n]:
                 n += 1
             emitted = self._legalize(
-                [int(c) for c in panels[off + overlap:off + n]],
-                events, i, active_holds)
+                list(panels[off + overlap:off + n]), events, i, active_holds)
             if not emitted:
                 continue
             total = overlap + len(emitted)
@@ -112,19 +110,21 @@ class PatternMatcher:
         return Emission(panels, "exact" if exact else "downgrade", meter)
 
     @staticmethod
-    def _legalize(panels: list[int], events, i,
-                  active_holds: dict[int, float]) -> list[int]:
+    def _legalize(panels: list[str], events, i,
+                  active_holds: dict[int, float]) -> list[str]:
         """Truncate an emission before any step that lands on a held panel.
         Holds declared by the osu events themselves anchor their candidate
         panel until their real end beat."""
+        from .patterns import decode_panels
         active = dict(active_holds)
         out = []
-        for k, panel in enumerate(panels):
+        for k, char in enumerate(panels):
             ev = events[i + k]
             active = {p: end for p, end in active.items() if end > ev.beat + 1e-6}
-            if panel in active:
+            decoded = decode_panels(char)
+            if any(p in active for p in decoded):
                 break
             if ev.kind in "OL":
-                active[panel] = ev.end_beat
-            out.append(panel)
+                active[decoded[0]] = ev.end_beat
+            out.append(char)
         return out

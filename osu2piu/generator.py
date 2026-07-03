@@ -116,6 +116,19 @@ class RuleGenerator:
         self.next_foot = self.rng.choice("LR")
         return lp, rp
 
+    def observe_jump(self, beat: float, pair: tuple[int, int]) -> None:
+        """Sync foot state with a pattern-emitted jump."""
+        a, b = sorted(pair)
+        left, right = a, b
+        if a == C:      # e.g. C+UR: left foot takes center
+            left, right = C, b
+        elif b == C:    # e.g. DL+C: right foot takes center
+            left, right = a, C
+        self.pos["L"], self.pos["R"] = left, right
+        self.last_panel = None
+        self.last_beat = beat
+        self.next_foot = self.rng.choice("LR")
+
     def observe(self, beat: float, panel: int, hold_end: float | None = None) -> None:
         """Sync foot state with a step placed by the pattern matcher, so the
         rule generator continues cleanly after pattern-emitted sections."""

@@ -25,6 +25,22 @@ PHRASE_SPLIT_GAP = 1.50  # folded beats; > this = new phrase
 POS_SHIFT = 4096         # position encoding: phrase_id * POS_SHIFT + offset
 
 
+# jump pairs encode as single panel-string chars 'A'..'J'
+PAIRS = [(a, b) for a in range(5) for b in range(a + 1, 5)]
+PAIR_CHAR = {p: chr(ord("A") + i) for i, p in enumerate(PAIRS)}
+PAIR_DECODE = {c: p for p, c in PAIR_CHAR.items()}
+
+
+def panel_char(panel: int, panel2: int | None = None) -> str:
+    if panel2 is None:
+        return str(panel)
+    return PAIR_CHAR[(panel, panel2) if panel < panel2 else (panel2, panel)]
+
+
+def decode_panels(char: str) -> tuple[int, ...]:
+    return (int(char),) if char in "01234" else PAIR_DECODE[char]
+
+
 def gap_class(fgap: float) -> str:
     if fgap <= 0.30:
         return "F"
@@ -35,14 +51,17 @@ def gap_class(fgap: float) -> str:
     return "S"
 
 
-def kind_char(is_hold: bool, fdur: float) -> str:
+def kind_char(is_hold: bool, fdur: float, is_jump: bool = False) -> str:
+    if is_jump:
+        return "J"
     if not is_hold:
         return "T"
     return "L" if fdur >= 2.0 else "O"
 
 
 def step_token(step: Step) -> str:
-    return gap_class(step.fgap) + kind_char(step.is_hold, step.fdur)
+    return gap_class(step.fgap) + kind_char(step.is_hold, step.fdur,
+                                            step.panel2 is not None)
 
 
 def p95_speed(times_s: list[float]) -> float | None:
@@ -235,7 +254,8 @@ def _split_phrases(steps: list[Step]) -> list[list[Step]]:
 def _encode_phrase(steps: list[Step], meter: int) -> dict:
     tok, panels, under = [], [], []
     for i, s in enumerate(steps):
-        tok.append(("S" + kind_char(s.is_hold, s.fdur)) if i == 0 else step_token(s))
-        panels.append(str(s.panel))
+        kind = kind_char(s.is_hold, s.fdur, s.panel2 is not None)
+        tok.append(("S" + kind) if i == 0 else step_token(s))
+        panels.append(panel_char(s.panel, s.panel2))
         under.append("1" if s.under_hold else "0")
     return {"t": "".join(tok), "p": "".join(panels), "u": "".join(under), "m": meter}
