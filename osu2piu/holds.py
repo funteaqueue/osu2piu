@@ -107,15 +107,22 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
     accepted = set(sorted(rests, key=rests.get, reverse=True)[:budget])
     accepted |= spinner_holds
 
-    # pass 3: jumps land on mapper-marked emphasis, corpus-budgeted
+    # pass 3: jumps land on mapper-marked emphasis, corpus-budgeted.
+    # Gaps are start-to-start — a slider that became a tap frees the foot at
+    # its head. Only a real hold anchors until its end.
     min_before, min_after = _jump_gap_mins(level)
     jump_scores: dict[int, float] = {}
     for i, ho in enumerate(objs):
         if i in accepted or ho.kind == "spinner":
             continue
         fbpm = fbpms[i]
-        gap_prev = _fgap(objs[i - 1].end_time, ho.time, fbpm) if i else 99.0
-        gap_next = (_fgap(ho.end_time, objs[i + 1].time, fbpm)
+        if i == 0:
+            gap_prev = 99.0
+        else:
+            anchored = (i - 1) in accepted or (i - 1) in spinner_holds
+            prev_ref = objs[i - 1].end_time if anchored else objs[i - 1].time
+            gap_prev = _fgap(prev_ref, ho.time, fbpm)
+        gap_next = (_fgap(ho.time, objs[i + 1].time, fbpm)
                     if i + 1 < len(objs) else 99.0)
         roomy = gap_prev >= min_before and gap_next >= min_after
         # dense charts (continuous 8th runs) jump at phrase boundaries, where
@@ -159,7 +166,8 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
         beat = grid.beat_at(ho.time)
         end_beat = grid.beat_at(ho.end_time)
         fbpm, fdur = fbpms[i], fdurs[i]
-        gap_prev = _fgap(objs[i - 1].end_time, ho.time, fbpm) if i else float("inf")
+        # head-to-head, matching how the library measures harvested steps
+        gap_prev = _fgap(objs[i - 1].time, ho.time, fbpm) if i else float("inf")
 
         as_hold = i in accepted
         # hold-ladder limiter: several anchored feet in a row at speed is misery

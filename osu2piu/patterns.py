@@ -21,7 +21,9 @@ from pathlib import Path
 from .sm_parser import Step, parse_ssc_file
 
 MAX_MATCH = 12          # longest pattern (in steps) the matcher will use
-PHRASE_SPLIT_GAP = 1.50  # folded beats; > this = new phrase
+# > this many folded beats = new phrase. Above the SLOW gap-class boundary
+# (1.5) so half-note rhythms (2.0) chain within a phrase; a real rest splits.
+PHRASE_SPLIT_GAP = 2.50
 POS_SHIFT = 4096         # position encoding: phrase_id * POS_SHIFT + offset
 
 
