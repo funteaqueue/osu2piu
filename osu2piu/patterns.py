@@ -46,17 +46,19 @@ def step_token(step: Step) -> str:
 
 
 class Library:
-    def __init__(self, phrases, tri, level_table, hold_share=None):
+    def __init__(self, phrases, tri, level_table, hold_share=None, avg_table=None):
         self.phrases = phrases          # list of {t, p, u, m}
         self.tri = tri                  # 6-char token key -> array('Q') of positions
         self.level_table = level_table  # meter -> median peak_nps
         self.hold_share = hold_share or {}  # meter -> fraction of steps that hold
+        self.avg_table = avg_table or {}    # meter -> median sustained nps
 
     def save(self, path: str) -> None:
         with open(path, "wb") as f:
             pickle.dump(
                 {"phrases": self.phrases, "tri": self.tri,
-                 "level_table": self.level_table, "hold_share": self.hold_share},
+                 "level_table": self.level_table, "hold_share": self.hold_share,
+                 "avg_table": self.avg_table},
                 f, protocol=pickle.HIGHEST_PROTOCOL,
             )
 
@@ -64,12 +66,20 @@ class Library:
     def load(cls, path: str) -> "Library":
         with open(path, "rb") as f:
             d = pickle.load(f)
-        return cls(d["phrases"], d["tri"], d["level_table"], d.get("hold_share"))
+        return cls(d["phrases"], d["tri"], d["level_table"],
+                   d.get("hold_share"), d.get("avg_table"))
 
-    def estimate_level(self, peak_nps: float) -> int:
+    def estimate_level(self, peak_nps: float, avg_nps: float | None = None) -> int:
+        """Two rulers: burst level (peak density) and stamina level (sustained
+        density). osu conversions often rest less than real charts of the same
+        peak, so the average of the two catches 'never lets you breathe'."""
         if not self.level_table:
             return max(1, min(24, round(peak_nps * 2.3)))
-        return min(self.level_table, key=lambda m: abs(self.level_table[m] - peak_nps))
+        lvl_p = min(self.level_table, key=lambda m: abs(self.level_table[m] - peak_nps))
+        if avg_nps is None or not self.avg_table:
+            return lvl_p
+        lvl_a = min(self.avg_table, key=lambda m: abs(self.avg_table[m] - avg_nps))
+        return int((lvl_p + lvl_a) / 2.0 + 0.5)  # ties round toward stamina
 
     def hold_target(self, level: int) -> float | None:
         """Fraction of notes that real charts of this level make holds."""
@@ -86,12 +96,16 @@ def build_library(training_dir: str, out_path: str) -> Library:
     files = sorted(Path(training_dir).rglob("*.ssc"))
     n_charts = 0
 
+    avg_by_meter: dict[int, list[float]] = defaultdict(list)
     for i, f in enumerate(files):
         for chart in parse_ssc_file(f):
             n_charts += 1
             nps_by_meter[chart.meter].append(chart.peak_nps)
             share_by_meter[chart.meter].append(
                 sum(1 for s in chart.steps if s.is_hold) / len(chart.steps))
+            duration = chart.steps[-1].time - chart.steps[0].time
+            if duration > 20.0:
+                avg_by_meter[chart.meter].append(len(chart.steps) / duration)
             for phrase_steps in _split_phrases(chart.steps):
                 phrases.append(_encode_phrase(phrase_steps, chart.meter))
         if (i + 1) % 500 == 0:
@@ -116,7 +130,11 @@ def build_library(training_dir: str, out_path: str) -> Library:
         users = [s for s in shares if s > 0]
         if len(users) >= 10 and m in level_table:
             hold_share[m] = statistics.median(users)
-    lib = Library(phrases, dict(tri), level_table, hold_share)
+    avg_table = {
+        m: statistics.median(v) for m, v in avg_by_meter.items()
+        if len(v) >= 5 and m in level_table
+    }
+    lib = Library(phrases, dict(tri), level_table, hold_share, avg_table)
     lib.save(out_path)
 
     n_steps = sum(len(p["p"]) for p in phrases)

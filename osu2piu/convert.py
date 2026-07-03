@@ -160,10 +160,10 @@ def _phrase_of(starts: list[int], i: int) -> int:
 
 
 def _pre_level(bm: Beatmap, lib: Library | None) -> int:
-    peak = _peak_nps([h.time for h in bm.hit_objects])
+    times = [h.time for h in bm.hit_objects]
     if lib:
-        return lib.estimate_level(peak)
-    return max(1, min(24, round(peak * 2.3)))
+        return lib.estimate_level(_peak_nps(times), _avg_nps(times))
+    return max(1, min(24, round(_peak_nps(times) * 2.3)))
 
 
 def _final_level(cells, grid: BeatGrid, lib: Library | None) -> int:
@@ -172,10 +172,16 @@ def _final_level(cells, grid: BeatGrid, lib: Library | None) -> int:
     tails ('3') are not steps."""
     times = sorted(_row_time(grid, row) for row, chars in cells.items()
                    if any(c in "12" for c in chars))
-    peak = _peak_nps(times)
     if lib:
-        return lib.estimate_level(peak)
-    return max(1, min(24, round(peak * 2.3)))
+        return lib.estimate_level(_peak_nps(times), _avg_nps(times))
+    return max(1, min(24, round(_peak_nps(times) * 2.3)))
+
+
+def _avg_nps(times_ms: list[float]) -> float | None:
+    if len(times_ms) < 2:
+        return None
+    duration = (max(times_ms) - min(times_ms)) / 1000.0
+    return len(times_ms) / duration if duration > 20.0 else None
 
 
 def _row_time(grid: BeatGrid, row: int) -> float:
