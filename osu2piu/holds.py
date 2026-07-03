@@ -40,6 +40,17 @@ def _jump_gap_mins(level: int) -> tuple[float, float]:  # (before, after)
         return 0.5, 0.5
     return 0.45, 0.5
 
+
+# minimum folded beats between two jumps (corpus p25 of jump-to-jump spacing)
+def _jump_min_spacing(level: int) -> float:
+    if level <= 2:
+        return 4.0
+    if level <= 4:
+        return 2.0
+    if level <= 12:
+        return 1.0
+    return 0.75
+
 # maps far more slider-heavy than a typical osu map (~50%) get a bigger hold
 # budget — the mapper heard the song as sustained phrases, let that through
 BASELINE_SLIDER_SHARE = 0.50
@@ -122,9 +133,19 @@ def classify(bm: Beatmap, grid: BeatGrid, level: int, rng: random.Random,
             score += 0.8 if round(beat) % 4 == 0 else 0.4  # (down)beat alignment
         if score >= 0.75:  # measure downbeats alone qualify (stream jumps)
             jump_scores[i] = score * rng.uniform(0.9, 1.1)
+    # greedy accept by emphasis, keeping level-appropriate distance between jumps
+    cum_f = [0.0]
+    for k in range(1, len(objs)):
+        cum_f.append(cum_f[-1] + (objs[k].time - objs[k - 1].time)
+                     / 60000.0 * fbpms[k - 1])
+    min_spacing = _jump_min_spacing(level)
     jump_budget = max(0, round(jump_target * len(objs)))
-    accepted_jumps = set(
-        sorted(jump_scores, key=jump_scores.get, reverse=True)[:jump_budget])
+    accepted_jumps: set[int] = set()
+    for i in sorted(jump_scores, key=jump_scores.get, reverse=True):
+        if len(accepted_jumps) >= jump_budget:
+            break
+        if all(abs(cum_f[i] - cum_f[j]) >= min_spacing for j in accepted_jumps):
+            accepted_jumps.add(i)
 
     events: list[NoteEvent] = []
     recent_holds = 0
