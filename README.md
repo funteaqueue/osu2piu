@@ -14,6 +14,50 @@ python -m osu2piu convert "path/to/map.osz" -o "D:/piu/XSanity/Songs/ZZ.OSU CONV
 python -m osu2piu convert "D:/piu/osu songs" -o "..." --patterns patterns.pkl --seed 42
 ```
 
+## Web studio
+
+Drag-and-drop `.osz` → preview the chart in sync with the music → edit /
+regenerate (whole chart or a selected region) → publish into the XSanity
+Songs folder. Design: [WEBAPP.md](WEBAPP.md).
+
+```
+docker compose up --build          # http://localhost:8080
+docker compose -f compose.dev.yml up   # dev: vite on :5173, hot reload
+```
+
+`patterns.pkl` and `corpus_stats.json` are checked into git (~45MB total —
+under GitHub's limits, and simpler than shipping them out-of-band), so a
+plain `git clone` + `docker compose up --build` is the entire deploy with
+no setup. `training/` itself stays gitignored (it's ~2,800 song folders,
+not something to version). To rebuild either artifact after adding more
+training charts:
+
+```
+python -m osu2piu build-patterns training -o patterns.pkl
+python -m osu2piu build-corpus-stats training -o corpus_stats.json
+```
+
+(each rebuild adds a new ~45MB blob to git history — fine for occasional
+updates, but don't run it in a loop.)
+
+Every path defaults to this directory — no `patterns.pkl`? conversion falls
+back to the rule generator; "publish" writes into `./publish`; the
+noteskin falls back to canvas-drawn. Copy `.env.example` to `.env` to point
+`PUBLISH_DIR` / `NOTESKIN_SOURCE_DIR` / etc. at a real XSanity install.
+
+Without Docker (three terminals):
+
+```
+PATTERNS_PATH=patterns.pkl python -m uvicorn osu2piu.api:app --port 8001
+cd web/server   && npm install && npm run build && node --env-file=.env.local dist/index.js
+cd web/frontend && npm install && npm run dev    # http://localhost:5173
+```
+
+(`web/server/.env.local` holds the local paths: projects dir, engine URL,
+publish dir, built-frontend dir, noteskin dir — gitignored, one per machine.)
+
+## CLI notes
+
 Every osu difficulty in the archive becomes one pump-single chart. Levels are
 calibrated against the training corpus (median peak notes-per-second per meter).
 Each conversion prints coverage: % of notes from exact pattern matches /

@@ -1,0 +1,23 @@
+[project]
+name = "osu2piu"
+version = "0.2.0"
+description = "Convert osu!standard beatmaps into pump-single StepMania charts"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+osu2piu = "osu2piu.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["osu2piu"]

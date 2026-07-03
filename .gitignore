@@ -2,4 +2,15 @@ out/
 __pycache__/
 *.pyc
 training/
-patterns.pkl
+
+node_modules/
+dist/
+
+# app data / local deployment config — see .env.example
+.env
+web/server/.env.local
+projects/
+publish/*
+!publish/.gitkeep
+noteskin/*
+!noteskin/.gitkeep

@@ -32,10 +32,12 @@ class Emission:
 
 
 class PatternMatcher:
-    def __init__(self, lib: Library, rng: random.Random, target_level: int):
+    def __init__(self, lib: Library, rng: random.Random, target_level: int,
+                 max_match: int | None = None):
         self.lib = lib
         self.rng = rng
         self.level = target_level
+        self.max_match = max(3, max_match) if max_match else MAX_MATCH
         # closest sources first; when widening, easy charts may reach DOWN
         # freely but barely UP — a level-5 pattern has turns a level-2
         # player can't read, while the reverse is merely easy.
@@ -69,7 +71,7 @@ class PatternMatcher:
     def _try(self, events, tokens, i, overlap, placed, active_holds,
              exact, lo, hi) -> Emission | None:
         start = i - overlap
-        window = tokens[start:start + MAX_MATCH]
+        window = tokens[start:start + self.max_match]
         if len(window) < 3 or len(window) <= overlap:
             return None
         if not exact:  # rhythm-only tier: relax holds to taps, keep jumps

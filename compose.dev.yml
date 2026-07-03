@@ -1,0 +1,50 @@
+# dev mode: uvicorn --reload + tsx watch + vite dev, all on bind mounts.
+#   docker compose -f compose.dev.yml up
+# frontend: http://localhost:5173  (proxies /api to the web service)
+# Same env-driven paths as docker-compose.yml — see .env.example.
+services:
+  engine:
+    image: python:3.12-slim
+    working_dir: /app
+    command: sh -c "pip install --no-cache-dir -e .[api] && uvicorn osu2piu.api:app --host 0.0.0.0 --port 8000 --reload"
+    environment:
+      PATTERNS_PATH: /data/patterns.pkl
+      CORPUS_STATS: /data/corpus_stats.json
+    volumes:
+      - .:/app
+      - ${PATTERNS_FILE:-./patterns.pkl}:/data/patterns.pkl:ro
+      - ${CORPUS_STATS_FILE:-./corpus_stats.json}:/data/corpus_stats.json:ro
+    ports:
+      - "8000:8000"
+
+  web:
+    image: node:22-alpine
+    working_dir: /app/web/server
+    command: sh -c "npm install && npx tsx watch src/index.ts"
+    environment:
+      ENGINE_URL: http://engine:8000
+      PROJECTS_DIR: /data/projects
+      PUBLISH_DIR: /publish
+      NOTESKIN_DIR: /noteskin
+    volumes:
+      - .:/app
+      - ${PROJECTS_DIR:-./projects}:/data/projects
+      - ${PUBLISH_DIR:-./publish}:/publish
+      - ${NOTESKIN_SOURCE_DIR:-./noteskin}:/noteskin:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      - engine
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app/web/frontend
+    command: sh -c "npm install && npx vite --host 0.0.0.0"
+    environment:
+      API_URL: http://web:8080
+    volumes:
+      - .:/app
+    ports:
+      - "5173:5173"
+    depends_on:
+      - web

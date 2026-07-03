@@ -1,0 +1,28 @@
+# All paths default to this directory, so `docker compose up --build` works
+# right after a fresh clone with no setup. Override via .env (see .env.example)
+# to point at a real XSanity install, a different publish location, etc.
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+    volumes:
+      - ${PATTERNS_FILE:-./patterns.pkl}:/data/patterns.pkl:ro
+      - ${CORPUS_STATS_FILE:-./corpus_stats.json}:/data/corpus_stats.json:ro
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    depends_on:
+      - engine
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    environment:
+      NOTESKIN_DIR: /noteskin
+    volumes:
+      - ${PROJECTS_DIR:-./projects}:/data/projects
+      - ${PUBLISH_DIR:-./publish}:/publish
+      - ${NOTESKIN_SOURCE_DIR:-./noteskin}:/noteskin:ro
+    restart: unless-stopped
