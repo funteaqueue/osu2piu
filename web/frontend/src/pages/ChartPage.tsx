@@ -37,6 +37,7 @@ export default function ChartPage() {
 
   const editor = useEditor();
   const audioRef = useRef<HTMLAudioElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const clockRef = useRef({ media: 0, perf: 0, playing: false, rate: 1 });
 
   const [playing, setPlaying] = useState(false);
@@ -75,6 +76,10 @@ export default function ChartPage() {
     () => (project ? new SongTiming(project.song.bpms, project.song.offsetSeconds) : null),
     [project],
   );
+  const videoStartTime = useMemo(
+    () => (project?.song.video && timing ? timing.timeAt(project.song.videoStartBeat || 0) : 0),
+    [project, timing],
+  );
 
   // ------------------------------------------------------------ loading
 
@@ -107,13 +112,29 @@ export default function ChartPage() {
     };
   }, []);
 
+  const syncVideo = useCallback((play = false) => {
+    const audio = audioRef.current;
+    const video = videoRef.current;
+    if (!audio || !video) return;
+    const target = audio.currentTime - videoStartTime;
+    video.playbackRate = audio.playbackRate;
+    if (target < 0) {
+      video.pause();
+      if (video.currentTime !== 0) video.currentTime = 0;
+      return;
+    }
+    if (Math.abs(video.currentTime - target) > 0.25) video.currentTime = target;
+    if (play && !audio.paused) void video.play().catch(() => undefined);
+  }, [videoStartTime]);
+
   const seek = useCallback((t: number) => {
     const audio = audioRef.current;
     if (!audio) return;
     audio.currentTime = Math.max(0, Math.min(t, audio.duration || t));
     syncClock();
+    syncVideo(!audio.paused);
     setCurTime(audio.currentTime);
-  }, [syncClock]);
+  }, [syncClock, syncVideo]);
 
   useEffect(() => {
     const iv = setInterval(() => setCurTime(getTime()), 200);
@@ -318,11 +339,11 @@ export default function ChartPage() {
         src={api.audioUrl(id)}
         preload="auto"
         onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); e.currentTarget.preservesPitch = true; }}
-        onPlay={() => { syncClock(); setPlaying(true); }}
-        onPause={() => { syncClock(); setPlaying(false); endPlaySession(); }}
-        onSeeked={() => { syncClock(); endPlaySession(); }}
-        onTimeUpdate={syncClock}
-        onRateChange={syncClock}
+        onPlay={() => { syncClock(); syncVideo(true); setPlaying(true); }}
+        onPause={() => { syncClock(); videoRef.current?.pause(); setPlaying(false); endPlaySession(); }}
+        onSeeked={() => { syncClock(); syncVideo(!audioRef.current?.paused); endPlaySession(); }}
+        onTimeUpdate={() => { syncClock(); syncVideo(true); }}
+        onRateChange={() => { syncClock(); syncVideo(true); }}
         onEnded={endPlaySession}
       />
 
@@ -380,6 +401,24 @@ export default function ChartPage() {
 
       <div className="editor-main">
         <div className="field-wrap">
+          {(project.song.background || project.song.video) && (
+            <div
+              className="preview-media"
+              style={project.song.background ? { backgroundImage: `url(${api.backgroundUrl(id)})` } : undefined}
+            >
+              {project.song.video && (
+                <video
+                  ref={videoRef}
+                  src={api.videoUrl(id)}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  className={curTime >= videoStartTime ? 'visible' : ''}
+                  onLoadedMetadata={() => syncVideo(playing)}
+                />
+              )}
+            </div>
+          )}
           <Notefield
             notes={editor.notes}
             timing={timing}
@@ -698,6 +737,7 @@ export default function ChartPage() {
             if (audioRef.current) {
               audioRef.current.playbackRate = r;
               audioRef.current.preservesPitch = true;
+              syncVideo(playing);
             }
           }}
         >

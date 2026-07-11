@@ -28,10 +28,12 @@ def convert_osz(osz_path: str, out_root: str, seed: int | None = None,
     names = {n.lower(): n for n in zf.namelist()}
     music = _extract(zf, names, ref.audio_filename, song_dir)
     background = _extract(zf, names, ref.background, song_dir)
+    video = _extract(zf, names, ref.video, song_dir)
 
     project = build_project(beatmaps, rng, lib, beginner=beginner)
     project["song"]["audioFile"] = music
     project["song"]["background"] = background
+    project["song"]["video"] = video
 
     for chart in project["charts"]:
         t = chart["stats"]["tiers"]

@@ -33,6 +33,8 @@ export interface SongJson {
   creator: string;
   audioFile: string;
   background: string;
+  video: string;
+  videoStartBeat: number;
   bpms: [number, number][];
   offsetSeconds: number;
   sampleStartSeconds: number;

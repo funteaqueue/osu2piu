@@ -15,6 +15,7 @@ RUN npm run build && npm prune --omit=dev
 
 FROM node:22-alpine
 WORKDIR /app
+RUN apk add --no-cache ffmpeg
 COPY --from=server /app/node_modules ./node_modules
 COPY --from=server /app/dist ./dist
 COPY --from=server /app/package.json ./

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { PROJECTS_DIR } from './config.js';
 import type { ChartJson, Project } from './types.js';
 
@@ -54,13 +55,14 @@ export function newProjectId(): string {
   return crypto.randomUUID().slice(0, 8);
 }
 
-/** Extract audio + background from the stored .osz into media/; returns the
+/** Extract audio, background, and video from the stored .osz into media/; returns the
  *  extracted (sanitized) file names. */
 export async function extractMedia(
   id: string,
   audioFile: string,
   background: string,
-): Promise<{ audio: string; bg: string }> {
+  video: string,
+): Promise<{ audio: string; bg: string; video: string }> {
   const dir = projectDir(id);
   const zip = new AdmZip(path.join(dir, 'song.osz'));
   const mediaDir = path.join(dir, 'media');
@@ -74,12 +76,41 @@ export async function extractMedia(
     fs.writeFileSync(path.join(mediaDir, out), entry.getData());
     return out;
   };
-  return { audio: pull(audioFile), bg: pull(background) };
+  return { audio: pull(audioFile), bg: pull(background), video: pull(video) };
 }
 
 export function mediaPath(id: string, file: string): string {
   const p = path.join(projectDir(id), 'media', path.basename(file));
   return p;
+}
+
+const videoTranscodes = new Map<string, Promise<string>>();
+
+/** Return a browser/StepMania-compatible H.264 MP4, transcoding lazily. */
+export async function previewVideoPath(id: string, file: string): Promise<string> {
+  const source = mediaPath(id, file);
+  const parsed = path.parse(source);
+  const output = path.join(parsed.dir, `${parsed.name}.bga.mp4`);
+  if (fs.existsSync(output)) return output;
+  const existing = videoTranscodes.get(output);
+  if (existing) return existing;
+
+  const task = new Promise<string>((resolve, reject) => {
+    const ffmpeg = spawn('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y', '-i', source,
+      '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+      '-pix_fmt', 'yuv420p', '-movflags', '+faststart', output,
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let error = '';
+    ffmpeg.stderr.on('data', (chunk) => { error += String(chunk).slice(0, 2000); });
+    ffmpeg.once('error', reject);
+    ffmpeg.once('exit', (code) => {
+      if (code === 0 && fs.existsSync(output)) resolve(output);
+      else reject(new Error(`video preview conversion failed${error ? `: ${error.trim()}` : ''}`));
+    });
+  }).finally(() => videoTranscodes.delete(output));
+  videoTranscodes.set(output, task);
+  return task;
 }
 
 // ------------------------------------------------------------- revisions

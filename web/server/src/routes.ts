@@ -3,14 +3,19 @@ import type { FastifyInstance } from 'fastify';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { ENGINE_URL, NOTESKIN_DIR, PUBLISH_DIR } from './config.js';
+import { ENGINE_URL, NOTESKIN_DIR, OSU_COOKIES_FILE, PUBLISH_DIR } from './config.js';
 import { engineConvert, engineExport, engineHealth, engineRegenerate } from './engine.js';
 import {
   deleteProject, extractMedia, listProjects, listRevisions, loadProject,
   loadRevision, mediaPath, newProjectId, projectDir, pushRevision,
-  safeName, saveProject,
+  previewVideoPath, safeName, saveProject,
 } from './store.js';
 import type { ChartJson, Note, Project, RegenerateBody } from './types.js';
+import {
+  downloadBeatmapset, parseOsuCookiesTxt,
+  searchOsuBeatmapsets, setOsuSessionCookie,
+} from './osu.js';
+import type { DownloadSource } from './osu.js';
 
 const AUDIO_MIME: Record<string, string> = {
   '.mp3': 'audio/mpeg',
@@ -24,11 +29,102 @@ const IMAGE_MIME: Record<string, string> = {
   '.png': 'image/png',
   '.webp': 'image/webp',
 };
+const VIDEO_MIME: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.avi': 'video/x-msvideo',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+};
+
+interface ImportJob {
+  status: 'working' | 'done' | 'error';
+  message: string;
+  history: string[];
+  projectId?: string;
+  source?: DownloadSource;
+}
+
+const importJobs = new Map<string, ImportJob>();
 
 export default async function routes(app: FastifyInstance): Promise<void> {
+  if (OSU_COOKIES_FILE) {
+    try {
+      const session = parseOsuCookiesTxt(await fsp.readFile(OSU_COOKIES_FILE, 'utf8'));
+      if (session) setOsuSessionCookie(session);
+      else app.log.warn('osu! cookies file contains no osu_session cookie');
+    } catch (error) {
+      app.log.warn({ error }, 'could not read osu! cookies file');
+    }
+  }
   app.get('/api/health', async () => {
     const engine = await engineHealth();
     return { status: 'ok', engine };
+  });
+
+  app.get<{ Querystring: { q?: string } }>('/api/osu/search', async (req, reply) => {
+    const query = (req.query.q ?? '').trim();
+    if (query.length < 2) return reply.code(400).send({ error: 'enter at least 2 characters' });
+    try {
+      return await searchOsuBeatmapsets(query);
+    } catch (error) {
+      req.log.error(error);
+      const message = error instanceof Error ? error.message : 'osu! search failed';
+      return reply.code(message.includes('not configured') ? 503 : 502).send({ error: message });
+    }
+  });
+
+  app.post<{ Body: { beatmapsetId?: number } }>('/api/osu/import', async (req, reply) => {
+    const beatmapsetId = Number(req.body?.beatmapsetId);
+    if (!Number.isInteger(beatmapsetId) || beatmapsetId <= 0) {
+      return reply.code(400).send({ error: 'invalid beatmapset ID' });
+    }
+    const jobId = newProjectId();
+    const job: ImportJob = { status: 'working', message: 'Queued…', history: [] };
+    importJobs.set(jobId, job);
+
+    const update = (message: string) => {
+      job.message = message;
+      job.history.push(message);
+    };
+    void (async () => {
+      try {
+        const downloaded = await downloadBeatmapset(beatmapsetId, update);
+        update(`Downloaded from ${downloaded.source}; converting…`);
+        const converted = await engineConvert(downloaded.data, `${beatmapsetId}.osz`, null);
+        const id = newProjectId();
+        await fsp.mkdir(projectDir(id), { recursive: true });
+        await fsp.writeFile(path.join(projectDir(id), 'song.osz'), downloaded.data);
+        const media = await extractMedia(
+          id, converted.song.audioFile, converted.song.background, converted.song.video,
+        );
+        const project: Project = {
+          id,
+          createdAt: new Date().toISOString(),
+          seed: null,
+          song: {
+            ...converted.song, audioFile: media.audio, background: media.bg, video: media.video,
+          },
+          charts: converted.charts,
+        };
+        await saveProject(project);
+        job.status = 'done';
+        job.projectId = id;
+        job.source = downloaded.source;
+        update('Conversion complete');
+      } catch (error) {
+        job.status = 'error';
+        update(error instanceof Error ? error.message : 'Import failed');
+      } finally {
+        setTimeout(() => importJobs.delete(jobId), 30 * 60 * 1000);
+      }
+    })();
+    return reply.code(202).send({ jobId });
+  });
+
+  app.get<{ Params: { jobId: string } }>('/api/osu/import/:jobId', async (req, reply) => {
+    const job = importJobs.get(req.params.jobId);
+    return job ?? reply.code(404).send({ error: 'import job not found' });
   });
 
   // ---------------------------------------------------------- noteskin
@@ -97,12 +193,16 @@ export default async function routes(app: FastifyInstance): Promise<void> {
     const id = newProjectId();
     await fsp.mkdir(projectDir(id), { recursive: true });
     await fsp.writeFile(path.join(projectDir(id), 'song.osz'), data);
-    const media = await extractMedia(id, converted.song.audioFile, converted.song.background);
+    const media = await extractMedia(
+      id, converted.song.audioFile, converted.song.background, converted.song.video,
+    );
     const project: Project = {
       id,
       createdAt: new Date().toISOString(),
       seed,
-      song: { ...converted.song, audioFile: media.audio, background: media.bg },
+      song: {
+        ...converted.song, audioFile: media.audio, background: media.bg, video: media.video,
+      },
       charts: converted.charts,
     };
     await saveProject(project);
@@ -238,6 +338,39 @@ export default async function routes(app: FastifyInstance): Promise<void> {
     return reply.type(mime).send(fs.createReadStream(file));
   });
 
+  app.get<{ Params: { id: string } }>('/api/projects/:id/video', async (req, reply) => {
+    const project = await loadProject(req.params.id);
+    if (!project.song.video) return reply.code(404).send({ error: 'no video' });
+    const source = mediaPath(req.params.id, project.song.video);
+    if (!fs.existsSync(source)) {
+      return reply.code(404).send({ error: 'no video' });
+    }
+    let file: string;
+    try {
+      file = await previewVideoPath(req.params.id, project.song.video);
+    } catch (error) {
+      req.log.error(error);
+      return reply.code(500).send({ error: 'could not prepare video preview' });
+    }
+    const size = (await fsp.stat(file)).size;
+    const mime = VIDEO_MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+    reply.header('accept-ranges', 'bytes').type(mime);
+    if (range && (range[1] || range[2])) {
+      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+      if (start >= size || start > end) {
+        return reply.code(416).header('content-range', `bytes */${size}`).send();
+      }
+      return reply
+        .code(206)
+        .header('content-range', `bytes ${start}-${end}/${size}`)
+        .header('content-length', end - start + 1)
+        .send(fs.createReadStream(file, { start, end }));
+    }
+    return reply.header('content-length', size).send(fs.createReadStream(file));
+  });
+
   // ---------------------------------------------------------- export / publish
 
   app.get<{ Params: { id: string } }>('/api/projects/:id/export', async (req, reply) => {
@@ -268,13 +401,21 @@ async function buildSongFolder(
   project: Project,
 ): Promise<{ folder: string; files: [string, Buffer][] }> {
   const folder = safeName(`${project.song.artist} - ${project.song.title}`) || project.id;
-  const ssc = await engineExport(project);
+  let exportProject = project;
+  let exportVideo: { name: string; path: string } | null = null;
+  if (project.song.video) {
+    const videoPath = await previewVideoPath(project.id, project.song.video);
+    exportVideo = { name: path.basename(videoPath), path: videoPath };
+    exportProject = { ...project, song: { ...project.song, video: exportVideo.name } };
+  }
+  const ssc = await engineExport(exportProject);
   const files: [string, Buffer][] = [[`${folder}.ssc`, Buffer.from(ssc, 'utf8')]];
   for (const media of [project.song.audioFile, project.song.background]) {
     if (!media) continue;
     const p = mediaPath(project.id, media);
     if (fs.existsSync(p)) files.push([media, await fsp.readFile(p)]);
   }
+  if (exportVideo) files.push([exportVideo.name, await fsp.readFile(exportVideo.path)]);
   return { folder, files };
 }
 

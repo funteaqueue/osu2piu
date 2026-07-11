@@ -25,6 +25,22 @@ docker compose up --build          # http://localhost:8080
 docker compose -f compose.dev.yml up   # dev: vite on :5173, hot reload
 ```
 
+The home page can also search official osu! beatmap listings. Register an
+OAuth application in your osu! account settings, then set `OSU_CLIENT_ID` and
+`OSU_CLIENT_SECRET` in `.env`. Search uses osu! API v2; downloads open the
+official osu! website and the downloaded `.osz` can be dropped into the studio.
+“Convert now” first tries an authenticated official-site download when
+`OSU_SESSION_COOKIE` is configured, then falls back to Chimu and Beatconnect;
+the UI shows each provider attempt. Keep this cookie private and rotate it if
+it is ever exposed.
+Place a Mozilla/Netscape-format `cookies.txt` export at the repository root
+(or set `OSU_COOKIES_FILE`). Docker mounts it read-only and the backend extracts
+only `osu_session` in memory. Cookie exports are gitignored.
+
+Song videos are retained in their original form inside the project. Preview and
+song export share a cached H.264/yuv420p MP4 conversion; exported `.ssc` files
+reference that compatibility MP4 instead of the source container/codec.
+
 ### Production (Linux server)
 
 Fresh clone to running app, no setup:

@@ -26,11 +26,16 @@ services:
       PROJECTS_DIR: /data/projects
       PUBLISH_DIR: /publish
       NOTESKIN_DIR: /noteskin
+      OSU_CLIENT_ID: ${OSU_CLIENT_ID:-}
+      OSU_CLIENT_SECRET: ${OSU_CLIENT_SECRET:-}
+      OSU_SESSION_COOKIE: ${OSU_SESSION_COOKIE:-}
+      OSU_COOKIES_FILE: /run/secrets/osu-cookies.txt
     volumes:
       - .:/app
       - ${PROJECTS_DIR:-./projects}:/data/projects
       - ${PUBLISH_DIR:-./publish}:/publish
       - ${NOTESKIN_SOURCE_DIR:-./noteskin}:/noteskin:ro
+      - ${OSU_COOKIES_FILE:-./cookies.txt}:/run/secrets/osu-cookies.txt:ro
     ports:
       - "${WEB_PORT:-8080}:8080"
     depends_on:

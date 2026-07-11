@@ -34,6 +34,8 @@ class Beatmap:
     audio_filename: str = ""
     preview_time: float = -1.0   # ms
     background: str = ""
+    video: str = ""
+    video_start_time: float = 0.0  # ms
     slider_multiplier: float = 1.4
     timing_points: list[TimingPoint] = field(default_factory=list)
     hit_objects: list[HitObject] = field(default_factory=list)
@@ -81,6 +83,12 @@ def parse_osu(text: str) -> Beatmap:
             parts = line.split(",")
             if len(parts) >= 3 and parts[0] in ("0", "Background") and not bm.background:
                 bm.background = parts[2].strip().strip('"')
+            elif len(parts) >= 3 and parts[0] in ("1", "Video") and not bm.video:
+                try:
+                    bm.video_start_time = float(parts[1])
+                except ValueError:
+                    bm.video_start_time = 0.0
+                bm.video = parts[2].strip().strip('"')
         elif section == "TimingPoints":
             parts = line.split(",")
             if len(parts) < 2:

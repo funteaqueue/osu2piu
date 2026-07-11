@@ -1,5 +1,19 @@
 import type { Chart, Note, Project, ProjectSummary, RegenOptions, RevisionInfo } from './types';
 
+export interface OsuSearchResult {
+  id: number; title: string; artist: string; creator: string; status: string;
+  cover: string; bpm: number | null; duration: number | null;
+  difficulties: number[]; hasVideo: boolean; pageUrl: string; downloadUrl: string;
+}
+
+export interface OsuImportJob {
+  status: 'working' | 'done' | 'error';
+  message: string;
+  history: string[];
+  projectId?: string;
+  source?: 'official' | 'chimu' | 'beatconnect';
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let msg = `${res.status}`;
@@ -13,6 +27,15 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  searchOsu: (q: string) =>
+    fetch(`/api/osu/search?q=${encodeURIComponent(q)}`).then((r) => json<OsuSearchResult[]>(r)),
+  startOsuImport: (beatmapsetId: number) =>
+    fetch('/api/osu/import', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ beatmapsetId }),
+    }).then((r) => json<{ jobId: string }>(r)),
+  getOsuImport: (jobId: string) =>
+    fetch(`/api/osu/import/${jobId}`).then((r) => json<OsuImportJob>(r)),
   listProjects: () => fetch('/api/projects').then((r) => json<ProjectSummary[]>(r)),
 
   getProject: (id: string) => fetch(`/api/projects/${id}`).then((r) => json<Project>(r)),
@@ -73,5 +96,6 @@ export const api = {
 
   audioUrl: (id: string) => `/api/projects/${id}/audio`,
   backgroundUrl: (id: string) => `/api/projects/${id}/background`,
+  videoUrl: (id: string) => `/api/projects/${id}/video`,
   exportUrl: (id: string) => `/api/projects/${id}/export`,
 };

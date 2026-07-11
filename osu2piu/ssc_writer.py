@@ -29,6 +29,8 @@ class Song:
     credit: str
     music: str
     background: str
+    video: str
+    video_start_beat: float
     offset: float
     sample_start: float
     bpms: list[tuple[float, float]]
@@ -61,6 +63,10 @@ def render_ssc(song: Song) -> str:
         "#FAKES:;",
         "#LABELS:0.000=Song Start;",
     ]
+    if song.video:
+        head.append(
+            f"#BGCHANGES:{song.video_start_beat:.3f}={_esc(song.video)}=1.000=0=0=1=====;"
+        )
     parts = ["\n".join(head)]
 
     for i, chart in enumerate(sorted(song.charts, key=lambda c: c.meter)):

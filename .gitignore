@@ -8,6 +8,9 @@ dist/
 
 # app data / local deployment config — see .env.example
 .env
+cookies.txt
+*cookies*.txt
+*coockies*.txt
 web/server/.env.local
 projects/
 publish/*

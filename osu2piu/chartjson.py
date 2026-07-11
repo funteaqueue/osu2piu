@@ -108,7 +108,7 @@ def build_project(beatmaps: list[Beatmap], rng: random.Random,
                   lib: Library | None, beginner: bool = True) -> dict:
     """Convert all difficulties of one mapset into project JSON.
 
-    audioFile/background hold the raw in-archive names; callers that extract
+    audioFile/background/video hold the raw in-archive names; callers that extract
     media rewrite them afterwards. With `beginner`, extra level-1/2 charts
     are derived by thinning the easiest difficulty (see beginner.py).
     """
@@ -124,6 +124,8 @@ def build_project(beatmaps: list[Beatmap], rng: random.Random,
         "creator": ref.creator,
         "audioFile": ref.audio_filename,
         "background": ref.background,
+        "video": ref.video,
+        "videoStartBeat": grid.beat_at(ref.video_start_time) if ref.video else 0.0,
         "bpms": [[beat, bpm] for beat, bpm in grid.bpm_changes()],
         "offsetSeconds": grid.offset_seconds,
         "sampleStartSeconds": max(ref.preview_time, 0.0) / 1000.0,
@@ -529,6 +531,8 @@ def render_project_ssc(project: dict) -> str:
         credit=f"{song['creator']} / osu2piu",
         music=song["audioFile"],
         background=song.get("background") or "",
+        video=song.get("video") or "",
+        video_start_beat=float(song.get("videoStartBeat") or 0.0),
         offset=song["offsetSeconds"],
         sample_start=song["sampleStartSeconds"],
         bpms=[(b, v) for b, v in song["bpms"]],
