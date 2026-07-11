@@ -8,7 +8,7 @@ import { engineConvert, engineExport, engineHealth, engineRegenerate } from './e
 import {
   deleteProject, extractMedia, listProjects, listRevisions, loadProject,
   loadRevision, mediaPath, newProjectId, projectDir, pushRevision,
-  previewVideoPath, safeName, saveProject,
+  previewVideoPath, safeName, saveProject, audioDuration,
 } from './store.js';
 import type { ChartJson, Note, Project, RegenerateBody } from './types.js';
 import {
@@ -302,6 +302,82 @@ export default async function routes(app: FastifyInstance): Promise<void> {
   );
 
   // ---------------------------------------------------------- media
+
+  app.get<{ Params: { id: string } }>('/api/projects/:id/audio/editor', async (req, reply) => {
+    const project = await loadProject(req.params.id);
+    const sourceFile = project.song.audioEdit?.sourceFile ?? project.song.audioFile;
+    const source = mediaPath(req.params.id, sourceFile);
+    if (!sourceFile || !fs.existsSync(source)) return reply.code(404).send({ error: 'no audio' });
+    return { duration: await audioDuration(source), edit: project.song.audioEdit ?? null };
+  });
+
+  app.put<{ Params: { id: string } }>('/api/projects/:id/audio/editor', async (req, reply) => {
+    const project = await loadProject(req.params.id);
+    const sourceFile = project.song.audioEdit?.sourceFile ?? project.song.audioFile;
+    const source = mediaPath(req.params.id, sourceFile);
+    if (!sourceFile || !fs.existsSync(source)) return reply.code(404).send({ error: 'no audio' });
+    const upload = await req.file();
+    if (!upload || upload.fieldname !== 'audio') return reply.code(400).send({ error: 'rendered audio is required' });
+    let body: { segments?: { start?: number; end?: number }[]; fadeStart?: number | null; fadeEnd?: number | null };
+    try {
+      const value = (upload.fields.edit as { value?: unknown } | undefined)?.value;
+      body = JSON.parse(String(value ?? '{}'));
+    } catch { return reply.code(400).send({ error: 'invalid audio edit metadata' }); }
+    const duration = await audioDuration(source);
+    const segments = (body.segments ?? []).map((s) => ({ start: Number(s.start), end: Number(s.end) }));
+    if (!segments.length || segments.length > 100 || segments.some((s) =>
+      !Number.isFinite(s.start) || !Number.isFinite(s.end) || s.start < 0 || s.end > duration + 0.01 || s.end - s.start < 0.01
+    )) return reply.code(400).send({ error: 'invalid audio segments' });
+    segments.sort((a, b) => a.start - b.start);
+    if (segments.some((s, i) => i > 0 && s.start < segments[i - 1].end)) {
+      return reply.code(400).send({ error: 'audio segments may not overlap' });
+    }
+    const outputDuration = segments.reduce((sum, s) => sum + s.end - s.start, 0);
+    const hasFade = body.fadeStart != null || body.fadeEnd != null;
+    const fadeStart = hasFade ? Number(body.fadeStart) : null;
+    const fadeEnd = hasFade ? Number(body.fadeEnd) : null;
+    if (hasFade && (!Number.isFinite(fadeStart) || !Number.isFinite(fadeEnd)
+      || (fadeStart as number) < 0 || (fadeEnd as number) > outputDuration + 0.01
+      || (fadeEnd as number) <= (fadeStart as number))) {
+      return reply.code(400).send({ error: 'fade must end after it starts and within the edited song' });
+    }
+    const outputFile = 'audio.edited.mp3';
+    try {
+      const data = await upload.toBuffer();
+      if (data.length < 4 || data.length > 256 * 1024 * 1024) throw new Error('invalid rendered audio size');
+      const tmp = `${mediaPath(req.params.id, outputFile)}.upload`;
+      await fsp.writeFile(tmp, data);
+      await fsp.rename(tmp, mediaPath(req.params.id, outputFile));
+    } catch (error) {
+      req.log.error(error);
+      return reply.code(500).send({ error: error instanceof Error ? error.message : 'could not store audio edit' });
+    }
+    project.song.audioFile = outputFile;
+    project.song.audioEdit = { sourceFile, segments, fadeStart, fadeEnd, outputDuration };
+    await saveProject(project);
+    return project;
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/projects/:id/audio/editor', async (req, reply) => {
+    const project = await loadProject(req.params.id);
+    const edit = project.song.audioEdit;
+    if (!edit) return project;
+    const edited = mediaPath(req.params.id, project.song.audioFile);
+    project.song.audioFile = edit.sourceFile;
+    delete project.song.audioEdit;
+    await saveProject(project);
+    if (edited !== mediaPath(req.params.id, edit.sourceFile)) await fsp.rm(edited, { force: true });
+    return project;
+  });
+
+  app.get<{ Params: { id: string } }>('/api/projects/:id/audio/source', async (req, reply) => {
+    const project = await loadProject(req.params.id);
+    const sourceFile = project.song.audioEdit?.sourceFile ?? project.song.audioFile;
+    const file = mediaPath(req.params.id, sourceFile);
+    if (!sourceFile || !fs.existsSync(file)) return reply.code(404).send({ error: 'no audio' });
+    const mime = AUDIO_MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
+    return reply.header('cache-control', 'no-store').type(mime).send(fs.createReadStream(file));
+  });
 
   app.get<{ Params: { id: string } }>('/api/projects/:id/audio', async (req, reply) => {
     const project = await loadProject(req.params.id);

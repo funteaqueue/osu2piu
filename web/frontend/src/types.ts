@@ -35,6 +35,16 @@ export interface Song {
   bpms: [number, number][];
   offsetSeconds: number;
   sampleStartSeconds: number;
+  audioEdit?: AudioEdit;
+}
+
+export interface AudioSegment { start: number; end: number }
+export interface AudioEdit {
+  sourceFile: string;
+  segments: AudioSegment[];
+  fadeStart: number | null;
+  fadeEnd: number | null;
+  outputDuration: number;
 }
 
 export interface Project {

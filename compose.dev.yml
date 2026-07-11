@@ -20,7 +20,7 @@ services:
   web:
     image: node:22-alpine
     working_dir: /app/web/server
-    command: sh -c "npm install && npx tsx watch src/index.ts"
+    command: sh -c "apk add --no-cache ffmpeg && npm install && npx tsx watch src/index.ts"
     environment:
       ENGINE_URL: http://engine:8000
       PROJECTS_DIR: /data/projects

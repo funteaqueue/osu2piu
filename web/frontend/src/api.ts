@@ -1,4 +1,4 @@
-import type { Chart, Note, Project, ProjectSummary, RegenOptions, RevisionInfo } from './types';
+import type { AudioEdit, AudioSegment, Chart, Note, Project, ProjectSummary, RegenOptions, RevisionInfo } from './types';
 
 export interface OsuSearchResult {
   id: number; title: string; artist: string; creator: string; status: string;
@@ -80,6 +80,20 @@ export const api = {
       json<{ ok: boolean; path: string }>(r),
     ),
 
+  audioEditor: (id: string) =>
+    fetch(`/api/projects/${id}/audio/editor`).then((r) =>
+      json<{ duration: number; edit: AudioEdit | null }>(r)),
+  saveAudioEdit: (id: string, audio: Blob, body: { segments: AudioSegment[]; fadeStart: number | null; fadeEnd: number | null }) => {
+    const form = new FormData();
+    form.append('edit', JSON.stringify(body));
+    form.append('audio', audio, 'audio.edited.mp3');
+    return fetch(`/api/projects/${id}/audio/editor`, {
+      method: 'PUT', body: form,
+    }).then((r) => json<Project>(r));
+  },
+  resetAudio: (id: string) =>
+    fetch(`/api/projects/${id}/audio/editor`, { method: 'DELETE' }).then((r) => json<Project>(r)),
+
   referenceLevel: (level: number) =>
     fetch(`/api/reference/level/${level}`).then((r) =>
       json<{ level: number; count: number; metrics: Record<string, number | null> }>(r),
@@ -95,6 +109,7 @@ export const api = {
     ),
 
   audioUrl: (id: string) => `/api/projects/${id}/audio`,
+  audioSourceUrl: (id: string) => `/api/projects/${id}/audio/source`,
   backgroundUrl: (id: string) => `/api/projects/${id}/background`,
   videoUrl: (id: string) => `/api/projects/${id}/video`,
   exportUrl: (id: string) => `/api/projects/${id}/export`,

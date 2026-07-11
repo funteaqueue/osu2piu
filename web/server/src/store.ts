@@ -84,6 +84,26 @@ export function mediaPath(id: string, file: string): string {
   return p;
 }
 
+function runMediaTool(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = ''; let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk).slice(0, 4000); });
+    child.once('error', reject);
+    child.once('exit', (code) => code === 0 ? resolve(stdout) : reject(new Error(`${command} failed: ${stderr.trim()}`)));
+  });
+}
+
+export async function audioDuration(file: string): Promise<number> {
+  const value = await runMediaTool('ffprobe', [
+    '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file,
+  ]);
+  const duration = Number(value.trim());
+  if (!Number.isFinite(duration) || duration <= 0) throw new Error('could not determine audio duration');
+  return duration;
+}
+
 const videoTranscodes = new Map<string, Promise<string>>();
 
 /** Return a browser/StepMania-compatible H.264 MP4, transcoding lazily. */

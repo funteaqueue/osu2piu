@@ -41,6 +41,13 @@ Song videos are retained in their original form inside the project. Preview and
 song export share a cached H.264/yuv420p MP4 conversion; exported `.ssc` files
 reference that compatibility MP4 instead of the source container/codec.
 
+Each project also includes a non-destructive audio editor. Split the original
+song at the player position, remove or precisely trim segments, and optionally
+set the output timestamps where an end fade starts and reaches silence. Applying
+an edit renders an MP3 locally in the browser with ffmpeg.wasm, then saves it for
+preview, export, and publish; “restore original”
+switches back to the untouched source audio.
+
 ### Production (Linux server)
 
 Fresh clone to running app, no setup:

@@ -4,6 +4,7 @@ import { api } from '../api';
 import { formatMetric, notesMetrics, type Metrics } from '../metrics';
 import { SongTiming } from '../timing';
 import type { Project } from '../types';
+import AudioEditor from '../components/AudioEditor';
 
 export default function ProjectPage() {
   const { id = '' } = useParams();
@@ -60,6 +61,8 @@ export default function ProjectPage() {
           }}
         />
       )}
+
+      {project.song.audioFile && <AudioEditor project={project} onChange={setProject} />}
 
       <div className="card" style={{ marginBottom: 16, overflowX: 'auto' }}>
         <table className="stats">
